@@ -5,6 +5,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import base64
 import re
+from datetime import datetime, date
 
 app = FastAPI()
 
@@ -21,6 +22,10 @@ def obtener_conexion_google():
     creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
     client = gspread.authorize(creds)
     return client, creds
+
+@app.get("/")
+async def home():
+    return {"status": "¡El bot de Disney+ está activo y funcionando!"}
 
 @app.post("/webhook")
 async def recibir_webhook(req: Request):
@@ -46,16 +51,89 @@ async def recibir_webhook(req: Request):
     elif "message" in data:
         msg = data["message"]
         chat_id = msg["chat"]["id"]
-        text = msg.get("text", "").strip().lower()
+        text = msg.get("text", "").strip()
+        text_lower = text.lower()
         
-        if text in ["/start", "/menu"]:
+        user_info = msg.get("from", {})
+        nombre_usuario = user_info.get("first_name", "Cliente")
+        if user_info.get("username"):
+            nombre_usuario += f" (@{user_info.get('username')})"
+
+        # Auto-registro automático si el usuario es nuevo
+        verificar_o_registrar_usuario(chat_id, nombre_usuario)
+
+        if text_lower in ["/start", "/menu"]:
             enviar_menu(chat_id)
-        elif text in ["/codigo", "codigo"]:
+        elif text_lower in ["/codigo", "codigo"]:
             procesar_solicitud_codigo(chat_id)
         else:
             enviar_menu(chat_id)
 
     return {"status": "ok"}
+
+@app.get("/enviar-recordatorios")
+async def enviar_recordatorios_automaticos():
+    """Ruta para revisar vencimientos y enviar avisos automáticos"""
+    try:
+        client, _ = obtener_conexion_google()
+        sh = client.open("Clientes")
+        worksheet = sh.worksheet("Clientes")
+        registros = worksheet.get_all_values()
+        
+        hoy = date.today()
+        enviados = 0
+        
+        for row in registros[1:]:
+            if len(row) < 6:
+                continue
+            chat_id = row[0]
+            nombre = row[1]
+            cuenta = row[2]
+            vencimiento_str = row[4].strip()
+            estado = row[5].strip()
+            
+            if estado.lower() != "activo":
+                continue
+                
+            try:
+                fecha_venc = datetime.strptime(vencimiento_str, "%Y-%m-%d").date()
+                dias_restantes = (fecha_venc - hoy).days
+                
+                if dias_restantes in [0, 1]:
+                    mensaje = f"⚠️ *AVISO DE VENCIMIENTO*\n\nHola {nombre}, tu suscripción de Disney+ (cuenta `{cuenta}`) "
+                    if dias_restantes == 0:
+                        mensaje += "*vence HOY*."
+                    else:
+                        mensaje += "vence mañana."
+                    
+                    mensaje += "\n\nComunícate a soporte para realizar tu renovación."
+                    
+                    payload = {"chat_id": chat_id, "text": mensaje, "parse_mode": "Markdown"}
+                    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
+                    enviados += 1
+            except ValueError:
+                continue
+                
+        return {"status": "success", "recordatorios_enviados": enviados}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def verificar_o_registrar_usuario(chat_id, nombre_usuario):
+    try:
+        client, _ = obtener_conexion_google()
+        sh = client.open("Clientes")
+        worksheet = sh.worksheet("Clientes")
+        
+        try:
+            cell = worksheet.find(str(chat_id))
+        except:
+            cell = None
+            
+        if not cell:
+            # Se registra solo con valores por defecto
+            worksheet.append_row([str(chat_id), nombre_usuario, "Por asignar", "N/A", "Sin fecha", "Activo"])
+    except Exception as e:
+        print(f"Error en auto-registro: {e}")
 
 def enviar_menu(chat_id):
     teclado = {
@@ -65,7 +143,7 @@ def enviar_menu(chat_id):
             [{"text": "💬 Soporte / Solicitar Pago", "callback_data": "soporte"}]
         ]
     }
-    enviar_mensaje(chat_id, "Bienvenido al servicio de Streaming\n\nSelecciona una opción en los botones de abajo:", teclado)
+    enviar_mensaje(chat_id, "Bienvenido al servicio de Streaming 🍿\n\nSelecciona una opción en los botones de abajo:", teclado)
 
 def enviar_soporte(chat_id):
     url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text=Hola,%20quiero%20información%20sobre%20los%20pagos%20o%20renovaciones%20de%20Disney+."
@@ -86,14 +164,14 @@ def consultar_datos_cliente(chat_id):
         
         if cell:
             row_values = worksheet.row_values(cell.row)
-            cuenta = row_values[2] if len(row_values) > 2 else "N/A"
+            cuenta = row_values[2] if len(row_values) > 2 else "Por asignar"
             pantalla = row_values[3] if len(row_values) > 3 else "N/A"
             vencimiento = row_values[4] if len(row_values) > 4 else "Sin fecha"
             estado = row_values[5] if len(row_values) > 5 else "Activo"
             
             mensaje = f"Tus datos de suscripción:\n\n• Cuenta: {cuenta}\n• Pantalla N°: {pantalla}\n• Vencimiento: {vencimiento}\n• Estado: {estado}"
         else:
-            mensaje = "⚠️ No tienes ninguna pantalla registrada con este ID de Telegram."
+            mensaje = "⚠️ No se encontraron tus datos en el sistema."
     except Exception as e:
         mensaje = "Ocurrió un error al consultar tus datos en la hoja."
         
@@ -113,13 +191,12 @@ def procesar_solicitud_codigo(chat_id):
             
         row_values = worksheet.row_values(cell.row)
         cuenta = row_values[2] if len(row_values) > 2 else ""
-        estado = row_values[5] if len(row_values) > 5 else ""
         
-        if estado.lower() != "activo" or not cuenta or cuenta.lower() in ["por asignar", "n/a"]:
-            enviar_mensaje(chat_id, "ACCESO RESTRINGIDO\n\nTu suscripción debe estar Activa y con una cuenta asignada para pedir códigos.")
+        if not cuenta or cuenta.lower() in ["por asignar", "n/a", ""]:
+            enviar_mensaje(chat_id, "⚠️ Aún no tienes una cuenta de Disney+ asignada. Comunícate a soporte.")
             return
 
-        enviar_mensaje(chat_id, "🔍 Buscando código reciente en el correo de Disney+, un momento...")
+        enviar_mensaje(chat_id, f"🔍 Buscando código reciente para el correo:\n`{cuenta}`\n\nUn momento...")
 
         service = build('gmail', 'v1', credentials=creds)
         query = f"from:disney to:{cuenta} label:INBOX newer_than:15m"
@@ -142,11 +219,11 @@ def procesar_solicitud_codigo(chat_id):
 
             match_codigo = re.search(r'\b\d{4,8}\b', body)
             if match_codigo:
-                texto_respuesta = f"Tu código de acceso de Disney+ es:\n\n{match_codigo[0]}\n\n(Cópialo e ingrésalo en tu pantalla)"
+                texto_respuesta = f"Tu código de acceso de Disney+ es:\n\n`{match_codigo[0]}`\n\n(Cópialo e ingrésalo en tu pantalla)"
             else:
                 texto_respuesta = f"Último mensaje recibido de Disney+:\n\n{body[:200]}..."
         else:
-            texto_respuesta = f"No hay solicitudes de código recientes para la cuenta ({cuenta}). Espera un minuto tras intentar iniciar sesión en tu TV y vuelve a presionar el botón."
+            texto_respuesta = f"No hay códigos recientes para la cuenta `{cuenta}`.\n\nIntenta iniciar sesión en tu TV, espera 30 segundos y vuelve a presionar el botón."
 
     except Exception as e:
         texto_respuesta = "Ocurrió un error al consultar el correo de Disney+."
@@ -159,4 +236,4 @@ def enviar_mensaje(chat_id, texto, teclado=None):
     if teclado:
         payload["reply_markup"] = teclado
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-             
+    
