@@ -12,7 +12,6 @@ app = FastAPI()
 BOT_TOKEN = "9197975180:AAGGidSbVmRlJTMDU8UhXEFP9h2oOmt1vJU"
 WHATSAPP_NUMERO = "584247091547"
 
-# Configuración de Google Sheets y Gmail
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/gmail.readonly"
@@ -59,7 +58,6 @@ async def recibir_webhook(req: Request):
         if user_info.get("username"):
             nombre_usuario += f" (@{user_info.get('username')})"
 
-        # Auto-registro automático si el usuario es nuevo
         verificar_o_registrar_usuario(chat_id, nombre_usuario)
 
         if text_lower in ["/start", "/menu"]:
@@ -73,7 +71,6 @@ async def recibir_webhook(req: Request):
 
 @app.get("/enviar-recordatorios")
 async def enviar_recordatorios_automaticos():
-    """Ruta para revisar vencimientos y enviar avisos automáticos"""
     try:
         client, _ = obtener_conexion_google()
         sh = client.open("Clientes")
@@ -130,7 +127,6 @@ def verificar_o_registrar_usuario(chat_id, nombre_usuario):
             cell = None
             
         if not cell:
-            # Se registra solo con valores por defecto
             worksheet.append_row([str(chat_id), nombre_usuario, "Por asignar", "N/A", "Sin fecha", "Activo"])
     except Exception as e:
         print(f"Error en auto-registro: {e}")
@@ -160,7 +156,11 @@ def consultar_datos_cliente(chat_id):
         client, _ = obtener_conexion_google()
         sh = client.open("Clientes")
         worksheet = sh.worksheet("Clientes")
-        cell = worksheet.find(str(chat_id))
+        
+        try:
+            cell = worksheet.find(str(chat_id))
+        except:
+            cell = None
         
         if cell:
             row_values = worksheet.row_values(cell.row)
@@ -183,8 +183,12 @@ def procesar_solicitud_codigo(chat_id):
         client, creds = obtener_conexion_google()
         sh = client.open("Clientes")
         worksheet = sh.worksheet("Clientes")
-        cell = worksheet.find(str(chat_id))
         
+        try:
+            cell = worksheet.find(str(chat_id))
+        except:
+            cell = None
+            
         if not cell:
             enviar_mensaje(chat_id, "⚠️ No estás registrado en el sistema.")
             return
@@ -236,4 +240,4 @@ def enviar_mensaje(chat_id, texto, teclado=None):
     if teclado:
         payload["reply_markup"] = teclado
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-    
+            
