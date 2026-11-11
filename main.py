@@ -20,13 +20,18 @@ SCOPES = [
 ]
 
 def obtener_conexion_google():
-    # Usamos utf-8-sig para eliminar automáticamente cualquier marca oculta (BOM) que ponga Android
-    with open("credentials.json", "r", encoding="utf-8-sig") as f:
-        creds_data = json.load(f)
-    
-    # Aseguramos que los saltos de línea de la llave privada sean correctos
+    creds_json_str = os.getenv("GOOGLE_CREDENTIALS")
+    if creds_json_str:
+        creds_data = json.loads(creds_json_str)
+    else:
+        with open("credentials.json", "r", encoding="utf-8-sig") as f:
+            creds_data = json.load(f)
+            
     if "private_key" in creds_data:
-        creds_data["private_key"] = creds_data["private_key"].replace("\\n", "\n")
+        pk = creds_data["private_key"]
+        if "\\n" in pk:
+            pk = pk.replace("\\n", "\n")
+        creds_data["private_key"] = pk
         
     creds = Credentials.from_service_account_info(creds_data, scopes=SCOPES)
     client = gspread.authorize(creds)
