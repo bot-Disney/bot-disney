@@ -17,18 +17,52 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly"
 ]
 
-# Credenciales incrustadas directamente para evitar cualquier error de archivos o formato
-CREDENTIALS_INFO = {
-    "type": "service_account",
-    "project_id": "voltaic-range-514403-v5",
-    "private_key_id": "2e26db608639b5a231160463802c30bdf5c7e686",
-    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCnYBYPmRQCusPv\n208BB/AZBYU2kmsIfMKvuUWwYYDGPIuZUhbxaTrCv0pHQXimTrBZRfAN3byBy0xA\nqPMQ9/jb7DU+nX0cjKU3tlB3EFTIss7Vu8nqnVMASWVctFoah/RVtUgaLYKAP5/f\nDll+qxdwXU1pAwcahtS/YfgRrRqY2aSXh747JQUtUIGVwlLpUYom9wGjS50DfM3b\nK2rlct1Nkog2mxfJ+50ijNrUgQ61emQgOpq/DEWkH4oC0qiURiqVo4m5RxGlEbKp\nysRJVRwPj+nzhnOAdGYeq1mDVQ7qM36ODhREx2ICIyeIym8DPAen0Kheo6c4ATIo\nxerq2d7LAgMBAAECggEALXFjm/mKWtFdeGZ5VUTT9d8vU2k+gS/qZe5uEtzuKyRu\nHIMSspnI9+4a2yzV9oVf0OUxr3oX/790JQwZ7m39FazUqfr1aIZxJyarQyBefJ07\nlgEl6bqsOeQzjo9y9UgbWRfeiyj3CR39KIELYF5Qf1P9u/iz+YpJAes2AIqYsY3Z\nflLqReulUVA4fZlPBncPepvFKbgmabAq5rhYwYS4pfE0wXTirkT+cZCroSvzDUWM\npMZsdCUeL2wHYbcP8D2Dlu/aXno/j1j7BNsH9v/Sbds547e6TsTfYqx+niKOZuOO\n1sgOBQDdNNRUbYsJiKYx29NONrDLP2GjNhycUYM1XQKBgQDRoywxHpTzBoojMBPg\nMPup/rgjajTvamTUAhNuU+lgjKDTkrK4/ayWHjjn3ERqxNxsGFhWKsTmMSD9j6GQ\2h5MZJCwVmUysE55uHMPl29Jh/ftnC10UpLOPq4G7aApQ9VPctlW+hBmAVBvpYWW\n/5M5p1j/rThxalqkC//C/RJzPQKBgQDMZDSjsdxXdJ+2g8D0oEOpgTSp4AMwS1uo\3RjUHuDD7NlaMTtcgEbQ/8BKKKnOzbn5lHfZXxaHzhANt1Spu2pRabPpCsQH+uQX\nkuWH74dZb8QhKLd/zwfPkxsMubrYflX8t5cM8GD1uGsrXKP21EOw2IEgDqBsImSw\nV+TYVFaapwKBgA57Ff9inGlZJ0uc85KF76xjcvbHTFbJY6OdbRgu5a0MqcNTm9LZ\newV3mvixJ2y0ooE5AUkadTVtaVj6he+KkZM3UyNLJHxm31TbH9+Q11gd80tPgXhK\nh+eFPuItoeWX0PFG/qpaZa2WI6dCqMKwbswJukUXAxIahZ5VUdp3PsIFAoGAAZcu\CbASpOOVcpgn4j91B1aoEEJcA/4yImhGDzCGUz/+mQMVES02X939oxYZ7DARqG2N\nWTWyOTBTU6f/kqqQsz19VuzshZtgNwa/noUwqnOCNTfZ5ba4utbMORcg6xpglOzg\n0gr01jSvMNExvXP9atzkdFloyi6iVfT5JO3TFrUCgYALlrZ8miNs8mD04YVN52Ri\ndvY49xZDokSSnedtGstd3mzp6vR2Xd2v7ervrMGz7i9ghXDkbjqNLa0zUWHVBlND\nD54WNluHTCp3iB48nBdnlxXrV1H1ucMt5TLUA7rGpqivhPZ8TZhwpdnV2XKrSN7B\nHKRIJVxJhaIt4oR2VYsBKg==\n-----END PRIVATE KEY-----\n",
-    "client_email": "bot-disney@voltaic-range-514403-v5.iam.gserviceaccount.com",
-    "token_uri": "https://oauth2.googleapis.com/token"
-}
-
 def obtener_conexion_google():
-    creds = Credentials.from_service_account_info(CREDENTIALS_INFO, scopes=SCOPES)
+    # Llave base procesada de forma 100% limpia y automática anti-errores móviles
+    raw_key = (
+        "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCnYBYPmRQCusPv"
+        "208BB/AZBYU2kmsIfMKvuUWwYYDGPIuZUhbxaTrCv0pHQXimTrBZRfAN3byBy0xA"
+        "qPMQ9/jb7DU+nX0cjKU3tlB3EFTIss7Vu8nqnVMASWVctFoah/RVtUgaLYKAP5/f"
+        "Dll+qxdwXU1pAwcahtS/YfgRrRqY2aSXh747JQUtUIGVwlLpUYom9wGjS50DfM3b"
+        "K2rlct1Nkog2mxfJ+50ijNrUgQ61emQgOpq/DEWkH4oC0qiURiqVo4m5RxGlEbKp"
+        "ysRJVRwPj+nzhnOAdGYeq1mDVQ7qM36ODhREx2ICIyeIym8DPAen0Kheo6c4ATIo"
+        "xerq2d7LAgMBAAECggEALXFjm/mKWtFdeGZ5VUTT9d8vU2k+gS/qZe5uEtzuKyRu"
+        "HIMSspnI9+4a2yzV9oVf0OUxr3oX/790JQwZ7m39FazUqfr1aIZxJyarQyBefJ07"
+        "lgEl6bqsOeQzjo9y9UgbWRfeiyj3CR39KIELYF5Qf1P9u/iz+YpJAes2AIqYsY3Z"
+        "flLqReulUVA4fZlPBncPepvFKbgmabAq5rhYwYS4pfE0wXTirkT+cZCroSvzDUWM"
+        "pMZsdCUeL2wHYbcP8D2Dlu/aXno/j1j7BNsH9v/Sbds547e6TsTfYqx+niKOZuOO"
+        "1sgOBQDdNNRUbYsJiKYx29NONrDLP2GjNhycUYM1XQKBgQDRoywxHpTzBoojMBPg"
+        "MPup/rgjajTvamTUAhNuU+lgjKDTkrK4/ayWHjjn3ERqxNxsGFhWKsTmMSD9j6GQ"
+        "2h5MZJCwVmUysE55uHMPl29Jh/ftnC10UpLOPq4G7aApQ9VPctlW+hBmAVBvpYWW"
+        "/5M5p1j/rThxalqkC//C/RJzPQKBgQDMZDSjsdxXdJ+2g8D0oEOpgTSp4AMwS1uo"
+        "3RjUHuDD7NlaMTtcgEbQ/8BKKKnOzbn5lHfZXxaHzhANt1Spu2pRabPpCsQH+uQX"
+        "kuWH74dZb8QhKLd/zwfPkxsMubrYflX8t5cM8GD1uGsrXKP21EOw2IEgDqBsImSw"
+        "V+TYVFaapwKBgA57Ff9inGlZJ0uc85KF76xjcvbHTFbJY6OdbRgu5a0MqcNTm9LZ"
+        "ewV3mvixJ2y0ooE5AUkadTVtaVj6he+KkZM3UyNLJHxm31TbH9+Q11gd80tPgXhK"
+        "h+eFPuItoeWX0PFG/qpaZa2WI6dCqMKwbswJukUXAxIahZ5VUdp3PsIFAoGAAZcu"
+        "CbASpOOVcpgn4j91B1aoEEJcA/4yImhGDzCGUz/+mQMVES02X939oxYZ7DARqG2N"
+        "WTWyOTBTU6f/kqqQsz19VuzshZtgNwa/noUwqnOCNTfZ5ba4utbMORcg6xpglOzg"
+        "0gr01jSvMNExvXP9atzkdFloyi6iVfT5JO3TFrUCgYALlrZ8miNs8mD04YVN52Ri"
+        "ndvY49xZDokSSnedtGstd3mzp6vR2Xd2v7ervrMGz7i9ghXDkbjqNLa0zUWHVBlND"
+        "D54WNluHTCp3iB48nBdnlxXrV1H1ucMt5TLUA7rGpqivhPZ8TZhwpdnV2XKrSN7B"
+        "HKRIJVxJhaIt4oR2VYsBKg=="
+    )
+    
+    # Reconstrucción estricta en bloques exactos de 64 caracteres
+    cleaned = "".join(raw_key.split())
+    formatted = "\n".join(cleaned[i:i+64] for i in range(0, len(cleaned), 64))
+    private_key_final = f"-----BEGIN PRIVATE KEY-----\n{formatted}\n-----END PRIVATE KEY-----\n"
+
+    creds_info = {
+        "type": "service_account",
+        "project_id": "voltaic-range-514403-v5",
+        "private_key_id": "2e26db608639b5a231160463802c30bdf5c7e686",
+        "private_key": private_key_final,
+        "client_email": "bot-disney@voltaic-range-514403-v5.iam.gserviceaccount.com",
+        "token_uri": "https://oauth2.googleapis.com/token"
+    }
+    
+    creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
     client = gspread.authorize(creds)
     return client, creds
 
@@ -245,4 +279,4 @@ def enviar_mensaje(chat_id, texto, teclado=None):
     if teclado:
         payload["reply_markup"] = teclado
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-    
+                            
