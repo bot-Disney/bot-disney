@@ -6,8 +6,6 @@ from googleapiclient.discovery import build
 import base64
 import re
 from datetime import datetime, date
-import json
-import os
 
 app = FastAPI()
 
@@ -20,35 +18,7 @@ SCOPES = [
 ]
 
 def obtener_conexion_google():
-    client_email = os.getenv("GOOGLE_CLIENT_EMAIL")
-    private_key = os.getenv("GOOGLE_PRIVATE_KEY")
-    
-    if client_email and private_key:
-        # Limpieza blindada anti-errores de teclado móvil
-        private_key = private_key.strip('"\'')
-        private_key = private_key.replace("\\\\n", "\n").replace("\\n", "\n")
-        
-        # Extraer exclusivamente el cuerpo de la llave base64 eliminando basura o saltos malos
-        lines = [line.strip() for line in private_key.splitlines() if line.strip()]
-        body_lines = [l for l in lines if not l.startswith("-----")]
-        pk_body = "".join(body_lines)
-        
-        # Reestructurar limpiamente en bloques de 64 caracteres exactos
-        pk_formateada = "\n".join(pk_body[i:i+64] for i in range(0, len(pk_body), 64))
-        private_key_final = f"-----BEGIN PRIVATE KEY-----\n{pk_formateada}\n-----END PRIVATE KEY-----\n"
-            
-        creds_data = {
-            "type": "service_account",
-            "client_email": client_email,
-            "private_key": private_key_final,
-            "token_uri": "https://oauth2.googleapis.com/token",
-        }
-        creds = Credentials.from_service_account_info(creds_data, scopes=SCOPES)
-    else:
-        with open("credentials.json", "r", encoding="utf-8-sig") as f:
-            creds_data = json.load(f)
-        creds = Credentials.from_service_account_info(creds_data, scopes=SCOPES)
-        
+    creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
     client = gspread.authorize(creds)
     return client, creds
 
@@ -265,4 +235,4 @@ def enviar_mensaje(chat_id, texto, teclado=None):
     if teclado:
         payload["reply_markup"] = teclado
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-            
+    
