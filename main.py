@@ -1,7 +1,8 @@
 import requests
 
 # Tu URL oficial de Apps Script que acabamos de verificar
-APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyiT5N-YF3X6Tk2egHY7zl9CwH1jvyjwsIEOr9lhn_YevtzcZ1HCAqxzqrFT9EYBWMr/exec"
+APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwpNYM0G0T3rAvTltsAdNxTcfatovAIYHZxNNjecksvz9RgOlpRNSciwarbp5I1Eqqn/exec
+"
 
 def consultar_datos_sheet(chat_id):
     payload = {
