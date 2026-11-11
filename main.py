@@ -24,12 +24,17 @@ def obtener_conexion_google():
     private_key = os.getenv("GOOGLE_PRIVATE_KEY")
     
     if client_email and private_key:
-        # Limpieza y reconstrucción automática anti-errores del celular
-        pk_limpia = private_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
-        pk_limpia = "".join(pk_limpia.split())  # Elimina espacios extra y saltos de línea rotos
+        # Limpieza blindada anti-errores de teclado móvil
+        private_key = private_key.strip('"\'')
+        private_key = private_key.replace("\\\\n", "\n").replace("\\n", "\n")
         
-        # Vuelve a armar la estructura PEM exacta en bloques de 64 caracteres
-        pk_formateada = "\n".join(pk_limpia[i:i+64] for i in range(0, len(pk_limpia), 64))
+        # Extraer exclusivamente el cuerpo de la llave base64 eliminando basura o saltos malos
+        lines = [line.strip() for line in private_key.splitlines() if line.strip()]
+        body_lines = [l for l in lines if not l.startswith("-----")]
+        pk_body = "".join(body_lines)
+        
+        # Reestructurar limpiamente en bloques de 64 caracteres exactos
+        pk_formateada = "\n".join(pk_body[i:i+64] for i in range(0, len(pk_body), 64))
         private_key_final = f"-----BEGIN PRIVATE KEY-----\n{pk_formateada}\n-----END PRIVATE KEY-----\n"
             
         creds_data = {
