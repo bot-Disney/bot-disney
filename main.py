@@ -24,26 +24,24 @@ def obtener_conexion_google():
     private_key = os.getenv("GOOGLE_PRIVATE_KEY")
     
     if client_email and private_key:
-        private_key = private_key.replace("\\\\n", "\n").replace("\\n", "\n")
-        if "-----BEGIN PRIVATE KEY-----" not in private_key:
-            private_key = "-----BEGIN PRIVATE KEY-----\n" + private_key.strip() + "\n-----END PRIVATE KEY-----\n"
+        # Limpieza y reconstrucción automática anti-errores del celular
+        pk_limpia = private_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
+        pk_limpia = "".join(pk_limpia.split())  # Elimina espacios extra y saltos de línea rotos
+        
+        # Vuelve a armar la estructura PEM exacta en bloques de 64 caracteres
+        pk_formateada = "\n".join(pk_limpia[i:i+64] for i in range(0, len(pk_limpia), 64))
+        private_key_final = f"-----BEGIN PRIVATE KEY-----\n{pk_formateada}\n-----END PRIVATE KEY-----\n"
             
         creds_data = {
             "type": "service_account",
             "client_email": client_email,
-            "private_key": private_key,
+            "private_key": private_key_final,
             "token_uri": "https://oauth2.googleapis.com/token",
         }
         creds = Credentials.from_service_account_info(creds_data, scopes=SCOPES)
     else:
         with open("credentials.json", "r", encoding="utf-8-sig") as f:
             creds_data = json.load(f)
-        if "private_key" in creds_data:
-            pk = creds_data["private_key"]
-            pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
-            if "-----BEGIN PRIVATE KEY-----" not in pk:
-                pk = "-----BEGIN PRIVATE KEY-----\n" + pk.strip() + "\n-----END PRIVATE KEY-----\n"
-            creds_data["private_key"] = pk
         creds = Credentials.from_service_account_info(creds_data, scopes=SCOPES)
         
     client = gspread.authorize(creds)
@@ -257,12 +255,9 @@ def procesar_solicitud_codigo(chat_id):
     teclado = {"inline_keyboard": [[{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]]}
     enviar_mensaje(chat_id, texto_respuesta, teclado)
 
-def neon_mensaje(chat_id, texto, teclado=None):
-    pass
-
 def enviar_mensaje(chat_id, texto, teclado=None):
     payload = {"chat_id": chat_id, "text": texto, "parse_mode": "Markdown"}
     if teclado:
         payload["reply_markup"] = teclado
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-                
+            
