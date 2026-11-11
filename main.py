@@ -69,63 +69,15 @@ async def recibir_webhook(req: Request):
 
     return {"status": "ok"}
 
-@app.get("/enviar-recordatorios")
-async def enviar_recordatorios_automaticos():
-    try:
-        client, _ = obtener_conexion_google()
-        sh = client.open("Clientes")
-        worksheet = sh.worksheet("Clientes")
-        registros = worksheet.get_all_values()
-        
-        hoy = date.today()
-        enviados = 0
-        
-        for row in registros[1:]:
-            if len(row) < 6:
-                continue
-            chat_id = row[0]
-            nombre = row[1]
-            cuenta = row[2]
-            vencimiento_str = row[4].strip()
-            estado = row[5].strip()
-            
-            if estado.lower() != "activo":
-                continue
-                
-            try:
-                fecha_venc = datetime.strptime(vencimiento_str, "%Y-%m-%d").date()
-                dias_restantes = (fecha_venc - hoy).days
-                
-                if dias_restantes in [0, 1]:
-                    mensaje = f"⚠️ *AVISO DE VENCIMIENTO*\n\nHola {nombre}, tu suscripción de Disney+ (cuenta `{cuenta}`) "
-                    if dias_restantes == 0:
-                        mensaje += "*vence HOY*."
-                    else:
-                        mensaje += "vence mañana."
-                    
-                    mensaje += "\n\nComunícate a soporte para realizar tu renovación."
-                    
-                    payload = {"chat_id": chat_id, "text": mensaje, "parse_mode": "Markdown"}
-                    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-                    enviados += 1
-            except ValueError:
-                continue
-                
-        return {"status": "success", "recordatorios_enviados": enviados}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
 def verificar_o_registrar_usuario(chat_id, nombre_usuario):
     try:
         client, _ = obtener_conexion_google()
         sh = client.open("Clientes")
         worksheet = sh.worksheet("Clientes")
-        
         try:
             cell = worksheet.find(str(chat_id))
         except:
             cell = None
-            
         if not cell:
             worksheet.append_row([str(chat_id), nombre_usuario, "Por asignar", "N/A", "Sin fecha", "Activo"])
     except Exception as e:
@@ -156,7 +108,6 @@ def consultar_datos_cliente(chat_id):
         client, _ = obtener_conexion_google()
         sh = client.open("Clientes")
         worksheet = sh.worksheet("Clientes")
-        
         try:
             cell = worksheet.find(str(chat_id))
         except:
@@ -168,12 +119,12 @@ def consultar_datos_cliente(chat_id):
             pantalla = row_values[3] if len(row_values) > 3 else "N/A"
             vencimiento = row_values[4] if len(row_values) > 4 else "Sin fecha"
             estado = row_values[5] if len(row_values) > 5 else "Activo"
-            
             mensaje = f"Tus datos de suscripción:\n\n• Cuenta: {cuenta}\n• Pantalla N°: {pantalla}\n• Vencimiento: {vencimiento}\n• Estado: {estado}"
         else:
             mensaje = "⚠️ No se encontraron tus datos en el sistema."
     except Exception as e:
-        mensaje = "Ocurrió un error al consultar tus datos en la hoja."
+        # Esto mostrará el error exacto en Telegram
+        mensaje = f"❌ Error técnico exacto:\n`{str(e)}`"
         
     teclado = {"inline_keyboard": [[{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]]}
     enviar_mensaje(chat_id, mensaje, teclado)
@@ -183,7 +134,6 @@ def procesar_solicitud_codigo(chat_id):
         client, creds = obtener_conexion_google()
         sh = client.open("Clientes")
         worksheet = sh.worksheet("Clientes")
-        
         try:
             cell = worksheet.find(str(chat_id))
         except:
@@ -227,10 +177,10 @@ def procesar_solicitud_codigo(chat_id):
             else:
                 texto_respuesta = f"Último mensaje recibido de Disney+:\n\n{body[:200]}..."
         else:
-            texto_respuesta = f"No hay códigos recientes para la cuenta `{cuenta}`.\n\nIntenta iniciar sesión en tu TV, espera 30 segundos y vuelve a presionar el botón."
+            texto_respuesta = f"No hay códigos recientes para la cuenta `{cuenta}`."
 
     except Exception as e:
-        texto_respuesta = "Ocurrió un error al consultar el correo de Disney+."
+        texto_respuesta = f"❌ Error técnico de correo:\n`{str(e)}`"
 
     teclado = {"inline_keyboard": [[{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]]}
     enviar_mensaje(chat_id, texto_respuesta, teclado)
