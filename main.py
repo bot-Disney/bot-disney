@@ -29,8 +29,10 @@ def obtener_conexion_google():
             
     if "private_key" in creds_data:
         pk = creds_data["private_key"]
-        if "\\n" in pk:
-            pk = pk.replace("\\n", "\n")
+        # Limpieza blindada para reparar saltos de línea alterados por el móvil
+        pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
+        if "-----BEGIN" not in pk:
+            pk = "-----BEGIN PRIVATE KEY-----\n" + pk.strip() + "\n-----END PRIVATE KEY-----\n"
         creds_data["private_key"] = pk
         
     creds = Credentials.from_service_account_info(creds_data, scopes=SCOPES)
