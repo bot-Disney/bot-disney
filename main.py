@@ -6,6 +6,8 @@ from googleapiclient.discovery import build
 import base64
 import re
 from datetime import datetime, date
+import json
+import os
 
 app = FastAPI()
 
@@ -18,7 +20,15 @@ SCOPES = [
 ]
 
 def obtener_conexion_google():
-    creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+    # Usamos utf-8-sig para eliminar automáticamente cualquier marca oculta (BOM) que ponga Android
+    with open("credentials.json", "r", encoding="utf-8-sig") as f:
+        creds_data = json.load(f)
+    
+    # Aseguramos que los saltos de línea de la llave privada sean correctos
+    if "private_key" in creds_data:
+        creds_data["private_key"] = creds_data["private_key"].replace("\\n", "\n")
+        
+    creds = Credentials.from_service_account_info(creds_data, scopes=SCOPES)
     client = gspread.authorize(creds)
     return client, creds
 
@@ -68,6 +78,52 @@ async def recibir_webhook(req: Request):
             enviar_menu(chat_id)
 
     return {"status": "ok"}
+
+@app.get("/enviar-recordatorios")
+async def enviar_recordatorios_automaticos():
+    try:
+        client, _ = obtener_conexion_google()
+        sh = client.open("Clientes")
+        worksheet = sh.worksheet("Clientes")
+        registros = worksheet.get_all_values()
+        
+        hoy = date.today()
+        enviados = 0
+        
+        for row in registros[1:]:
+            if len(row) < 6:
+                continue
+            chat_id = row[0]
+            nombre = row[1]
+            cuenta = row[2]
+            vencimiento_str = row[4].strip()
+            estado = row[5].strip()
+            
+            if estado.lower() != "activo":
+                continue
+                
+            try:
+                fecha_venc = datetime.strptime(vencimiento_str, "%Y-%m-%d").date()
+                dias_restantes = (fecha_venc - hoy).days
+                
+                if dias_restantes in [0, 1]:
+                    mensaje = f"⚠️ *AVISO DE VENCIMIENTO*\n\nHola {nombre}, tu suscripción de Disney+ (cuenta `{cuenta}`) "
+                    if dias_restantes == 0:
+                        mensaje += "*vence HOY*."
+                    else:
+                        mensaje += "vence mañana."
+                    
+                    mensaje += "\n\nComunícate a soporte para realizar tu renovación."
+                    
+                    payload = {"chat_id": chat_id, "text": mensaje, "parse_mode": "Markdown"}
+                    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
+                    enviados += 1
+            except ValueError:
+                continue
+                
+        return {"status": "success", "recordatorios_enviados": enviados}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 def verificar_o_registrar_usuario(chat_id, nombre_usuario):
     try:
@@ -123,8 +179,7 @@ def consultar_datos_cliente(chat_id):
         else:
             mensaje = "⚠️ No se encontraron tus datos en el sistema."
     except Exception as e:
-        # Esto mostrará el error exacto en Telegram
-        mensaje = f"❌ Error técnico exacto:\n`{str(e)}`"
+        mensaje = f"❌ Error:\n`{str(e)}`"
         
     teclado = {"inline_keyboard": [[{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]]}
     enviar_mensaje(chat_id, mensaje, teclado)
@@ -180,7 +235,7 @@ def procesar_solicitud_codigo(chat_id):
             texto_respuesta = f"No hay códigos recientes para la cuenta `{cuenta}`."
 
     except Exception as e:
-        texto_respuesta = f"❌ Error técnico de correo:\n`{str(e)}`"
+        texto_respuesta = f"❌ Error de correo:\n`{str(e)}`"
 
     teclado = {"inline_keyboard": [[{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]]}
     enviar_mensaje(chat_id, texto_respuesta, teclado)
