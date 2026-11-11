@@ -22,6 +22,13 @@ SCOPES = [
 def obtener_conexion_google():
     creds_json_str = os.getenv("GOOGLE_CREDENTIALS")
     if creds_json_str:
+        # Corrige automáticamente las comillas curvas que ponen los teléfonos
+        creds_json_str = (creds_json_str
+            .replace("“", '"')
+            .replace("”", '"')
+            .replace("‘", '"')
+            .replace("’", '"')
+        )
         creds_data = json.loads(creds_json_str)
     else:
         with open("credentials.json", "r", encoding="utf-8-sig") as f:
@@ -29,9 +36,8 @@ def obtener_conexion_google():
             
     if "private_key" in creds_data:
         pk = creds_data["private_key"]
-        # Limpieza blindada para reparar saltos de línea alterados por el móvil
         pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
-        if "-----BEGIN" not in pk:
+        if "-----BEGIN PRIVATE KEY-----" not in pk:
             pk = "-----BEGIN PRIVATE KEY-----\n" + pk.strip() + "\n-----END PRIVATE KEY-----\n"
         creds_data["private_key"] = pk
         
@@ -252,4 +258,3 @@ def enviar_mensaje(chat_id, texto, teclado=None):
     if teclado:
         payload["reply_markup"] = teclado
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-            
