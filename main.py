@@ -17,47 +17,50 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly"
 ]
 
-def obtener_conexion_google():
-    # Llave base procesada de forma 100% limpia y automática anti-errores móviles
-    raw_key = (
-        "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCnYBYPmRQCusPv"
-        "208BB/AZBYU2kmsIfMKvuUWwYYDGPIuZUhbxaTrCv0pHQXimTrBZRfAN3byBy0xA"
-        "qPMQ9/jb7DU+nX0cjKU3tlB3EFTIss7Vu8nqnVMASWVctFoah/RVtUgaLYKAP5/f"
-        "Dll+qxdwXU1pAwcahtS/YfgRrRqY2aSXh747JQUtUIGVwlLpUYom9wGjS50DfM3b"
-        "K2rlct1Nkog2mxfJ+50ijNrUgQ61emQgOpq/DEWkH4oC0qiURiqVo4m5RxGlEbKp"
-        "ysRJVRwPj+nzhnOAdGYeq1mDVQ7qM36ODhREx2ICIyeIym8DPAen0Kheo6c4ATIo"
-        "xerq2d7LAgMBAAECggEALXFjm/mKWtFdeGZ5VUTT9d8vU2k+gS/qZe5uEtzuKyRu"
-        "HIMSspnI9+4a2yzV9oVf0OUxr3oX/790JQwZ7m39FazUqfr1aIZxJyarQyBefJ07"
-        "lgEl6bqsOeQzjo9y9UgbWRfeiyj3CR39KIELYF5Qf1P9u/iz+YpJAes2AIqYsY3Z"
-        "flLqReulUVA4fZlPBncPepvFKbgmabAq5rhYwYS4pfE0wXTirkT+cZCroSvzDUWM"
-        "pMZsdCUeL2wHYbcP8D2Dlu/aXno/j1j7BNsH9v/Sbds547e6TsTfYqx+niKOZuOO"
-        "1sgOBQDdNNRUbYsJiKYx29NONrDLP2GjNhycUYM1XQKBgQDRoywxHpTzBoojMBPg"
-        "MPup/rgjajTvamTUAhNuU+lgjKDTkrK4/ayWHjjn3ERqxNxsGFhWKsTmMSD9j6GQ"
-        "2h5MZJCwVmUysE55uHMPl29Jh/ftnC10UpLOPq4G7aApQ9VPctlW+hBmAVBvpYWW"
-        "/5M5p1j/rThxalqkC//C/RJzPQKBgQDMZDSjsdxXdJ+2g8D0oEOpgTSp4AMwS1uo"
-        "3RjUHuDD7NlaMTtcgEbQ/8BKKKnOzbn5lHfZXxaHzhANt1Spu2pRabPpCsQH+uQX"
-        "kuWH74dZb8QhKLd/zwfPkxsMubrYflX8t5cM8GD1uGsrXKP21EOw2IEgDqBsImSw"
-        "V+TYVFaapwKBgA57Ff9inGlZJ0uc85KF76xjcvbHTFbJY6OdbRgu5a0MqcNTm9LZ"
-        "ewV3mvixJ2y0ooE5AUkadTVtaVj6he+KkZM3UyNLJHxm31TbH9+Q11gd80tPgXhK"
-        "h+eFPuItoeWX0PFG/qpaZa2WI6dCqMKwbswJukUXAxIahZ5VUdp3PsIFAoGAAZcu"
-        "CbASpOOVcpgn4j91B1aoEEJcA/4yImhGDzCGUz/+mQMVES02X939oxYZ7DARqG2N"
-        "WTWyOTBTU6f/kqqQsz19VuzshZtgNwa/noUwqnOCNTfZ5ba4utbMORcg6xpglOzg"
-        "0gr01jSvMNExvXP9atzkdFloyi6iVfT5JO3TFrUCgYALlrZ8miNs8mD04YVN52Ri"
-        "ndvY49xZDokSSnedtGstd3mzp6vR2Xd2v7ervrMGz7i9ghXDkbjqNLa0zUWHVBlND"
-        "D54WNluHTCp3iB48nBdnlxXrV1H1ucMt5TLUA7rGpqivhPZ8TZhwpdnV2XKrSN7B"
-        "HKRIJVxJhaIt4oR2VYsBKg=="
-    )
-    
-    # Reconstrucción estricta en bloques exactos de 64 caracteres
-    cleaned = "".join(raw_key.split())
-    formatted = "\n".join(cleaned[i:i+64] for i in range(0, len(cleaned), 64))
-    private_key_final = f"-----BEGIN PRIVATE KEY-----\n{formatted}\n-----END PRIVATE KEY-----\n"
+# Llave privada protegida y codificada para prevenir errores de formato móvil
+PEM_B64 = (
+    "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2QUlCQURBTkJna3Foa2lHOXcw"
+    "QkFRRUZBQVNDQktZd2dnU2lBZ0VBQW9JQkFRQ25ZQllwbVJRQ3VzUHYKMjA4QkIvQVpF"
+    "QllVMmRtcyJJTWFLU3ZVVXdZWURHUEl1elVoYnhhVHJDdjBwSFFYml1clJaUmZBTjNh"
+    "ZUJ5MHhBCnFQTVE5L2piN0RVK25YMGNqS1UzdGxCM0VGVElzczdWdThucW5WTUFTV1Zj"
+    "dEZvYWgvUlZ0VWdhTFlLQVA1L2YKRGxsK3F4ZHdVMTBBd2NhaHRTL1lmZ1JyUnFZMjFT"
+    "WGg3NDdKUVV0VUlHV3dsTHBVWW9tOWdqUzUwRGZNM2IKSzJybGN0MU5rb2cybWZKKzUwaW"
+    "pOclVnUTYxZW1RZ09wcS9ERVdrSG4wQzBxaVVScWlWbzRtNVJ4R2xFYktwCnlzUkpWUndQ"
+    "aituemhuT0FkR1dlcTFtRFZRN3FNMzZPRGhSZzJJQ0l5ZUl5bThEUEVuMEtoZW82YzRBVF"
+    "lvCnhlcXwydDdMQWdNQkFBRWNnZ0VBTFhGam0vbUtXdEZkZUdaNVZVVFRFZDh2VTJrK2dT"
+    "L3FaZTV1RXR6dVt5UnV1CkhJTVNzcG5JOS80YTIyekJWOW9WZjBPVXhyM29YLzc5MEpRZ1"
+    "p0bTM5RmF6VVFmcjFhSVp4SnlhclF5QmVmSjA3CmxnRWw2cWVPZVF6ago5eVVnYldGZmVp"
+    "eWozQ1IzOUtJRUxZNVFmMVA5dS9pei1ZcEpJQWVzMkFJcVlzWTNaCmZsTHRReXVsVVZBNG"
+    "mWlBCbmNQZXB2RktiZ21hYVFmcmhZd1lTNFBmRTB3WFRpcmtUM2NaQ3JvU3paV1ZNCnBa"
+    "WndkQ1VlTDJ3SFliY1A4RDJEbHUvYVhuby9qMWo3Qk5zSDl2L1Nic2U1NDdlNlRzVGZ5cX"
+    "grbmlLT1p1T08KMXNnT0JRRGROTlJVYllzamlLSXl4MjlOT05yRExQMkdqTmhzY1lNMVJR"
+    "S2JnUURSb3l3eEhwVHpCb29qTUJQZwpNUHVwL3JnamFqVHZhbVRVQWhOdVUtbGdqS0R0a3"
+    "JLNC9heVdISmpuM0VScXhOb3NHRmhXS3NUbU1TRDlqNkdRLzJoNU1aSkN3Vm1ZdVM1NXVH"
+    "UBsMjlKaC9mdG5DMTBVcExPUHE0RzdhQVA5VlBjdGxXLWhCbUFWQnB5V1cvNU01cDFqL3JU"
+    "aHhhbHFrQy8vQy9SSnpQUUtnZ1BETVpEU2pzbGRYZEpGMmc4RDBvRU9wZ1RTcDRBTXdTMX"
+    "VvCjNSalVIdUREN2xhTVR0Y2dFYlEvOEJLS0tuT3pibjVsSGZaWHhhSHpoQU50MVNwdTJw"
+    "UmFiUHBDc1FIK3VRWAprd1dINzRkWmI4UWhLTEQvendmUGhtVXJtYllmbFg4dDVjTThHRD"
+    "F1R3NyWEtQMjFFT3cySUVnRHFCc0ltU3cKVlBUWVFGYXB3S0JnQTU3RmY5aW5HbEpKMHVj"
+    "ODVLRjc2eGN2YkhURmJKWTZPZGJSZ3U1YTBNcUNUTW45TFoKZXdWM3Z2aXhKMnowb281QU"
+    "VrYWReVnRhVmo2aGUrS2taTTN1WU5MTEpIbXoxVGJIOV0lMTFnZDhfb3RQZ1hoSwoKaCtl"
+    "RlB1SXRvZVdYMFBGRy9xcGFaYTJXSTZkQ3FNS3did3JKdWtVWEF4SWFoWjVWVWRwM1BzSU"
+    "ZvR0FBWjd1CkJiQVNwT09WY3BnbjRqOTFCMWFvRUVKY0EvNHlJbWhHRHpaR1V6LyttUU1W"
+    "RVMwMlgyOTNgb3laWjdEQXFHMk4KV1RXeU9UT1JUTTZmL2trUVN6MTlWdXpzaFp0Z053YS"
+    "9ub1V3cW5PQ05UZlpiYTR1dGJNT1JjZzZ4cGdsT3pnCjBncjAxSlN2TU5FeFhQOWF0emtk"
+    "RmxveWlpSFZqVDVKSTNUMlRyVUNnWUFMbFpaOG1pTnMybUQwNFlWTjUyUmkKZHZ5TzQ5elh"
+    "Eb2tTU25lZHRHc3RkM3ptenB2clJ6V2QydjcGVydHJNR3o3aWdnaFhkamtxTlphMDBVV0hW"
+    "bE5ECkQ1NFdObHVIVENwM2lDODhuQmRubHhYclYxSDF1Y010NVRMVUE3ckdHcXZpaFAyWj"
+    "hUWmh3cGRuVjJYS3JTazdCCkhLUklKVnhKaGFJdDRvUjJWWXNCR2c9PQo="
+)
 
+def obtener_conexion_google():
+    private_key_decoded = base64.b64decode(PEM_B64).decode('utf-8')
+    
     creds_info = {
         "type": "service_account",
         "project_id": "voltaic-range-514403-v5",
         "private_key_id": "2e26db608639b5a231160463802c30bdf5c7e686",
-        "private_key": private_key_final,
+        "private_key": private_key_decoded,
         "client_email": "bot-disney@voltaic-range-514403-v5.iam.gserviceaccount.com",
         "token_uri": "https://oauth2.googleapis.com/token"
     }
@@ -279,4 +282,3 @@ def enviar_mensaje(chat_id, texto, teclado=None):
     if teclado:
         payload["reply_markup"] = teclado
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-                            
