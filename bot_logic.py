@@ -65,7 +65,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con selector de servicio, datos de pago móvil, tasa USDT y reenvío al admin."""
+    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas por usuario."""
     
     str_chat_id = str(chat_id).strip()
     registrar_cliente_si_no_existe(chat_id, nombre, username)
@@ -81,16 +81,22 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         suscripciones = obtener_suscripciones_por_id(chat_id)
         cuenta_asociada = "Por Asignar"
         servicio_asociado = "Disney+"
+        row_idx_pendiente = None
         
         if suscripciones:
             for s in suscripciones:
                 if "pendiente" in str(s.get("Estado", "")).lower():
                     cuenta_asociada = s.get("Cuenta", "Por Asignar")
                     servicio_asociado = s.get("Servicio", "Disney+")
+                    row_idx_pendiente = s.get("_row_index")
                     break
             else:
                 cuenta_asociada = suscripciones[0].get("Cuenta", "Por Asignar")
                 servicio_asociado = suscripciones[0].get("Servicio", "Disney+")
+                row_idx_pendiente = suscripciones[0].get("_row_index")
+
+        if not row_idx_pendiente:
+            row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
 
         # Notificar y reenviar la foto al Administrador
         if ADMIN_ID and enviar_foto_callback:
@@ -101,12 +107,11 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 f"• *Servicio:* {servicio_asociado}\n"
                 f"• *Cuenta/Detalle:* {cuenta_asociada}"
             )
-            row_idx = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
             
             teclado_admin = {
                 "inline_keyboard": [
-                    [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}"}],
-                    [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx}"}]
+                    [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}"}],
+                    [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_pendiente}"}]
                 ]
             }
             enviar_foto_callback(int(ADMIN_ID), photo_file_id, caption_admin, teclado_admin)
@@ -302,16 +307,19 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     # SELECCIÓN DE SERVICIO + DATOS DE PAGO MÓVIL Y TASA USDT
     # -------------------------------------------------------------
     elif accion == "renovar_suscripcion" or accion == "comprar_extra":
+        es_compra_nueva = (accion == "comprar_extra")
+        tipo_operacion = "nueva" if es_compra_nueva else "renovar"
+        
         mensaje = (
             "🛒 *SELECCIONA EL SERVICIO*\n\n"
-            "¿Qué plataforma deseas comprar o renovar en este momento?\n\n"
+            f"¿Qué plataforma deseas {'comprar como nueva pantalla' if es_compra_nueva else 'renovar'} en este momento?\n\n"
             f"• *Disney+:* `${PRECIO_DISNEY_USD:.2f} USDT`\n"
             f"• *Netflix:* `${PRECIO_NETFLIX_USD:.2f} USDT`"
         )
         teclado_servicios = {
             "inline_keyboard": [
-                [{"text": f"📺 Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": "pagar_servicio_disney"}],
-                [{"text": f"📺 Netflix (${PRECIO_NETFLIX_USD:.2f})", "callback_data": "pagar_servicio_netflix"}],
+                [{"text": f"📺 Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": f"pagar_servicio_disney_{tipo_operacion}"}],
+                [{"text": f"📺 Netflix (${PRECIO_NETFLIX_USD:.2f})", "callback_data": f"pagar_servicio_netflix_{tipo_operacion}"}],
                 [{"text": "🔙 Volver", "callback_data": "menu_principal"}]
             ]
         }
@@ -321,22 +329,32 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, mensaje, teclado_servicios)
 
     elif accion.startswith("pagar_servicio_"):
+        partes = accion.split("_")
         es_netflix = "netflix" in accion
         servicio_elegido = "Netflix" if es_netflix else "Disney+"
+        tipo_operacion = partes[-1] if len(partes) > 3 else "renovar"
         precio_usd = PRECIO_NETFLIX_USD if es_netflix else PRECIO_DISNEY_USD
         
         esperando_captura_pago.add(str_chat_id)
         
-        cuenta_asociada = "Por Asignar"
-        suscripciones = obtener_suscripciones_por_id(chat_id)
-        if suscripciones:
-            for s in suscripciones:
-                if s.get("Servicio", "").strip().lower() == servicio_elegido.lower():
-                    cuenta_asociada = s.get("Cuenta", "Por Asignar")
-                    break
-
-        # Registramos el estado pendiente con el servicio correcto
-        obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_elegido)
+        if tipo_operacion == "nueva":
+            # Si pidió "Otra Pantalla", SIEMPRE crea una fila nueva independiente sin pisar la anterior
+            crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
+        else:
+            # Si pidió "Renovar", actualiza la pantalla de ese servicio o crea fila si no tiene ninguna de ese servicio
+            cuenta_asociada = "Por Asignar"
+            suscripciones = obtener_suscripciones_por_id(chat_id)
+            encontrado = False
+            if suscripciones:
+                for s in suscripciones:
+                    if s.get("Servicio", "").strip().lower() == servicio_elegido.lower():
+                        cuenta_asociada = s.get("Cuenta", "Por Asignar")
+                        encontrado = True
+                        break
+            if not encontrado:
+                crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
+            else:
+                obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_elegido)
 
         # Calculamos la tasa USDT del día y el total en Bolívares
         tasa_usdt = obtener_tasa_usdt_hoy()
@@ -438,15 +456,24 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
 
 
 def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat_id, suscripciones_asociadas, enviar_foto_callback):
-    cuenta_asociada = suscripciones_asociadas[0].get("Cuenta", "Por Asignar") if suscripciones_asociadas else "Por Asignar"
-    servicio_asociado = suscripciones_asociadas[0].get("Servicio", "Disney+") if suscripciones_asociadas else "Disney+"
+    cuenta_asociada = "Por Asignar"
+    servicio_asociado = "Disney+"
+    row_idx_pendiente = None
     
     if suscripciones_asociadas:
         for s in suscripciones_asociadas:
             if "pendiente" in str(s.get("Estado", "")).lower():
                 cuenta_asociada = s.get("Cuenta", "Por Asignar")
                 servicio_asociado = s.get("Servicio", "Disney+")
+                row_idx_pendiente = s.get("_row_index")
                 break
+        else:
+            cuenta_asociada = suscripciones_asociadas[0].get("Cuenta", "Por Asignar")
+            servicio_asociado = suscripciones_asociadas[0].get("Servicio", "Disney+")
+            row_idx_pendiente = suscripciones_asociadas[0].get("_row_index")
+
+    if not row_idx_pendiente:
+        row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
 
     if ADMIN_ID:
         texto_admin = (
@@ -457,11 +484,11 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
             f"• *Cuenta:* {cuenta_asociada}\n"
             f"• *Referencia/Detalle:* `{texto}`"
         )
-        row_idx = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
+        
         teclado_admin = {
             "inline_keyboard": [
-                [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}"}],
-                [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx}"}]
+                [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}"}],
+                [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_pendiente}"}]
             ]
         }
         enviar_cb(int(ADMIN_ID), texto_admin, teclado_admin)
@@ -477,7 +504,12 @@ def obtener_suscripciones_por_id(chat_id):
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
         str_chat_id = str(chat_id).strip()
-        return [f for f in registros if str(f.get("Telegram_ID", "")).strip() == str_chat_id]
+        resultados = []
+        for idx, r in enumerate(registros, start=2):
+            if str(r.get("Telegram_ID", "")).strip() == str_chat_id:
+                r["_row_index"] = idx
+                resultados.append(r)
+        return resultados
     except Exception as e:
         print(f"Error: {e}")
         return []
@@ -492,16 +524,29 @@ def registrar_cliente_si_no_existe(chat_id, nombre, username):
     except Exception as e:
         print(f"Error registrando: {e}")
 
+def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disney"):
+    """Añade siempre una nueva fila en Google Sheets para una pantalla adicional sin tocar las existentes."""
+    try:
+        sheet = conectar_sheets()
+        nombre_completo = f"{nombre} (@{username})" if username else nombre
+        sheet.append_row([str(str_chat_id), nombre_completo, "Por Asignar", "1", "", "Pendiente Pago", servicio])
+    except Exception as e:
+        print(f"Error creando fila nueva: {e}")
+
 def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney"):
+    """Actualiza solo la fila que coincida con el servicio a renovar (o que ya esté pendiente), sin tocar otras filas activas."""
     try:
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
         for idx, row in enumerate(registros, start=2):
             if str(row.get("Telegram_ID", "")).strip() == str_chat_id:
-                sheet.update_cell(idx, 6, "Pendiente Pago")
-                sheet.update_cell(idx, 7, servicio)
-                return idx
-        sheet.append_row([str(chat_id), nombre, cuenta, "1", "", "Pendiente Pago", servicio])
+                srv_fila = str(row.get("Servicio", "")).strip().lower()
+                est_fila = str(row.get("Estado", "")).strip().lower()
+                if srv_fila == servicio.lower() or "pendiente" in est_fila:
+                    sheet.update_cell(idx, 6, "Pendiente Pago")
+                    sheet.update_cell(idx, 7, servicio)
+                    return idx
+        sheet.append_row([str(str_chat_id), nombre, cuenta, "1", "", "Pendiente Pago", servicio])
         return len(registros) + 2
     except Exception as e:
         print(f"Error en fila pendiente: {e}")
