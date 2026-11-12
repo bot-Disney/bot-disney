@@ -555,4 +555,5 @@ def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disne
         perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
         sheet.append_row([str(str_chat_id), nombre_completo, "Por Asignar", perfil_asignado, "", "Pendiente Pago", servicio])
     except Exception as e:
-        print(f
+        print(f"Error: {e}")
+        
