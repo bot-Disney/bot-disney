@@ -1,11 +1,23 @@
 import os
 import time
 import datetime
+import requests
 from sheets_db import conectar_sheets
 from gmail_otp import obtener_ultimo_codigo_disney, obtener_ultimo_codigo_netflix
 
 WHATSAPP_NUMERO = "584247091547"
 ADMIN_ID = str(os.getenv("ADMIN_TELEGRAM_ID", "")).strip()
+
+# =============================================================
+# CONFIGURACIÓN DE PRECIOS (USD/USDT) Y DATOS DE PAGO MÓVIL
+# =============================================================
+PRECIO_DISNEY_USD = 5.0   # Ajusta aquí el precio en USD/USDT de Disney+
+PRECIO_NETFLIX_USD = 4.5  # Ajusta aquí el precio en USD/USDT de Netflix
+TASA_RESPALDO_BS = 65.0   # Tasa de respaldo por si fallan las consultas externas
+
+PAGO_MOVIL_BANCO = "🏦 Provincial (0108)"
+PAGO_MOVIL_CEDULA = "27538779"
+PAGO_MOVIL_TELEFONO = "04247091547"
 
 control_intentos_otp = {}
 MAX_INTENTOS_RAPIDOS = 2
@@ -14,8 +26,46 @@ COOLDOWN_SEGUNDOS = 180
 # Control de usuarios que están esperando enviar captura de pago
 esperando_captura_pago = set()
 
+
+def obtener_tasa_usdt_hoy():
+    """Consulta la tasa USDT/VES del día (Binance P2P con respaldo automático) sin bloquear el bot."""
+    # 1. Intento principal: Binance P2P (promedio de los primeros anuncios de venta USDT -> VES)
+    try:
+        url_binance = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+        payload = {
+            "asset": "USDT",
+            "fiat": "VES",
+            "merchantCheck": False,
+            "page": 1,
+            "payTypes": [],
+            "publisherType": None,
+            "rows": 5,
+            "tradeType": "BUY"
+        }
+        res = requests.post(url_binance, json=payload, timeout=4)
+        if res.status_code == 200:
+            anuncios = res.json().get("data", [])
+            precios = [float(a["adv"]["price"]) for a in anuncios if "adv" in a and "price" in a["adv"]]
+            if precios:
+                return round(sum(precios) / len(precios), 2)
+    except Exception as e:
+        print(f"Aviso: No se pudo leer Binance P2P ({e}), probando respaldo...")
+
+    # 2. Respaldo: API pública monitor Venezuela (EnParalelo / USDT)
+    try:
+        res_alt = requests.get("https://pydolarve.org/api/v1/dollar?monitor=enparalelovzla", timeout=3)
+        if res_alt.status_code == 200:
+            precio = res_alt.json().get("price")
+            if precio:
+                return round(float(precio), 2)
+    except Exception:
+        pass
+
+    return TASA_RESPALDO_BS
+
+
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con selector de servicio, recepción de capturas y reenvío al admin."""
+    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con selector de servicio, datos de pago móvil, tasa USDT y reenvío al admin."""
     
     str_chat_id = str(chat_id).strip()
     registrar_cliente_si_no_existe(chat_id, nombre, username)
@@ -32,9 +82,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         cuenta_asociada = "Por Asignar"
         servicio_asociado = "Disney+"
         
-        # Buscamos la última suscripción pendiente o la más reciente del usuario para extraer el servicio que eligió
         if suscripciones:
-            # Si hay alguna pendiente, priorizamos esa
             for s in suscripciones:
                 if "pendiente" in str(s.get("Estado", "")).lower():
                     cuenta_asociada = s.get("Cuenta", "Por Asignar")
@@ -44,7 +92,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 cuenta_asociada = suscripciones[0].get("Cuenta", "Por Asignar")
                 servicio_asociado = suscripciones[0].get("Servicio", "Disney+")
 
-        # Notificar y reenviar la foto al Administrador (A ti)
+        # Notificar y reenviar la foto al Administrador
         if ADMIN_ID and enviar_foto_callback:
             caption_admin = (
                 "🔔 *¡NUEVO COMPROBANTE DE PAGO (FOTO)!* 🔔\n\n"
@@ -61,10 +109,8 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx}"}]
                 ]
             }
-            # Reenvía la foto exacta que mandó el cliente a tu chat de admin
             enviar_foto_callback(int(ADMIN_ID), photo_file_id, caption_admin, teclado_admin)
 
-        # Confirmar al cliente
         texto_confirmacion = (
             "✅ *¡Captura de pago recibida con éxito!*\n\n"
             "Se la hemos enviado al administrador. En breve tu pago será verificado y tu cuenta activada.\n\n"
@@ -82,7 +128,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         enviar_mensaje_callback(chat_id, texto_confirmacion, teclado_cliente)
         return
 
-    # Si manda texto normal mientras esperaba foto
+    # Si manda texto normal mientras esperaba foto (ej: número de referencia)
     if not es_callback and str_chat_id in esperando_captura_pago and texto:
         esperando_captura_pago.remove(str_chat_id)
         procesar_texto_reporte(chat_id, texto, nombre, username, enviar_mensaje_callback, str_chat_id, suscripciones_asociadas=obtener_suscripciones_por_id(chat_id), enviar_foto_callback=enviar_foto_callback)
@@ -142,7 +188,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                         except Exception:
                             pass
                 else:
-                    enviar_mensaje_callback(chat_id, f"❌ Error al actualizar la hoja de cálculo.", get_back_keyboard())
+                    enviar_mensaje_callback(chat_id, "❌ Error al actualizar la hoja de cálculo.", get_back_keyboard())
             except Exception as e:
                 enviar_mensaje_callback(chat_id, f"❌ Error: {e}", get_back_keyboard())
         return
@@ -157,6 +203,9 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     # MENÚ PRINCIPAL Y FUNCIONES DE CLIENTE
     # -------------------------------------------------------------
     elif accion == "menu_principal" or accion == "/start" or accion == "/menu":
+        if str_chat_id in esperando_captura_pago:
+            esperando_captura_pago.remove(str_chat_id)
+            
         texto_menu = (
             "🤖 *Bienvenido al servicio de Streaming*\n\n"
             "Gestiona tus pantallas, códigos de acceso y renovaciones desde los botones de abajo:"
@@ -217,7 +266,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
         suscripciones_activas = [s for s in obtener_suscripciones_por_id(chat_id) if s.get("Estado", "").strip().lower() == "activo"]
 
-        # Si el cliente tiene más de 1 pantalla activa (ej: Disney y Netflix), le damos a elegir
         if len(suscripciones_activas) > 1 and not accion.startswith("pedir_otp_"):
             botones_selector = []
             for idx, sub in enumerate(suscripciones_activas):
@@ -234,7 +282,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 enviar_mensaje_callback(chat_id, mensaje, {"inline_keyboard": botones_selector})
             return
 
-        # Si tiene 1 sola pantalla activa
         servicio_seleccionado = str(suscripciones_activas[0].get("Servicio", "Disney")).strip().lower() if suscripciones_activas else "disney"
         ejecutar_busqueda_otp(chat_id, str_chat_id, servicio_seleccionado, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
 
@@ -252,17 +299,19 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error al seleccionar la pantalla. Intenta de nuevo.", get_back_keyboard())
 
     # -------------------------------------------------------------
-    # SELECCIÓN Y SOLICITUD DE CAPTURA DE PAGO (NUEVO FLUJO)
+    # SELECCIÓN DE SERVICIO + DATOS DE PAGO MÓVIL Y TASA USDT
     # -------------------------------------------------------------
     elif accion == "renovar_suscripcion" or accion == "comprar_extra":
         mensaje = (
             "🛒 *SELECCIONA EL SERVICIO*\n\n"
-            "¿Qué plataforma deseas comprar o renovar en este momento?"
+            "¿Qué plataforma deseas comprar o renovar en este momento?\n\n"
+            f"• *Disney+:* `${PRECIO_DISNEY_USD:.2f} USDT`\n"
+            f"• *Netflix:* `${PRECIO_NETFLIX_USD:.2f} USDT`"
         )
         teclado_servicios = {
             "inline_keyboard": [
-                [{"text": "📺 Disney+", "callback_data": "pagar_servicio_disney"}],
-                [{"text": "📺 Netflix", "callback_data": "pagar_servicio_netflix"}],
+                [{"text": f"📺 Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": "pagar_servicio_disney"}],
+                [{"text": f"📺 Netflix (${PRECIO_NETFLIX_USD:.2f})", "callback_data": "pagar_servicio_netflix"}],
                 [{"text": "🔙 Volver", "callback_data": "menu_principal"}]
             ]
         }
@@ -272,7 +321,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, mensaje, teclado_servicios)
 
     elif accion.startswith("pagar_servicio_"):
-        servicio_elegido = "Netflix" if "netflix" in accion else "Disney+"
+        es_netflix = "netflix" in accion
+        servicio_elegido = "Netflix" if es_netflix else "Disney+"
+        precio_usd = PRECIO_NETFLIX_USD if es_netflix else PRECIO_DISNEY_USD
+        
         esperando_captura_pago.add(str_chat_id)
         
         cuenta_asociada = "Por Asignar"
@@ -283,20 +335,31 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     cuenta_asociada = s.get("Cuenta", "Por Asignar")
                     break
 
-        # Registramos/actualizamos el estado pendiente especificando el servicio correcto
+        # Registramos el estado pendiente con el servicio correcto
         obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_elegido)
 
-        texto_wa = f"Hola, quiero reportar mi pago para {servicio_elegido}. Mi ID de Telegram es: {str_chat_id}."
+        # Calculamos la tasa USDT del día y el total en Bolívares
+        tasa_usdt = obtener_tasa_usdt_hoy()
+        monto_bs = round(precio_usd * tasa_usdt, 2)
+
+        texto_wa = f"Hola, acabo de realizar el pago móvil de {monto_bs} Bs ({precio_usd} USDT) para {servicio_elegido}. Mi ID es: {str_chat_id}."
         url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_wa.replace(' ', '%20')}"
         
         mensaje = (
-            f"📸 *ENVÍA TU CAPTURA DE PAGO PARA {servicio_elegido.upper()}*\n\n"
-            "Por favor, **envía la foto o captura de pantalla de tu comprobante** directamente por este chat. El bot se la hará llegar al administrador con el servicio correcto.\n\n"
-            "💡 *Sugerencia:* Si prefieres hablar por WhatsApp, usa el botón de abajo:"
+            f"💳 *DATOS DE PAGO — {servicio_elegido.upper()}*\n\n"
+            f"💵 *Monto:* `{precio_usd:.2f} USDT`\n"
+            f"📈 *Tasa del día:* `{tasa_usdt} Bs`\n"
+            f"💰 *Total a transferir:* `{monto_bs} Bs`\n\n"
+            f"📲 *Datos de Pago Móvil (Toca para copiar):*\n"
+            f"• *Banco:* {PAGO_MOVIL_BANCO}\n"
+            f"• *Cédula:* `{PAGO_MOVIL_CEDULA}`\n"
+            f"• *Teléfono:* `{PAGO_MOVIL_TELEFONO}`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📸 *PASO FINAL:* Realiza el pago y **envía la captura de pantalla (o el número de referencia)** directamente por este chat para activar tus 30 días."
         )
         teclado_renovar = {
             "inline_keyboard": [
-                [{"text": "💬 Enviar por WhatsApp", "url": url_whatsapp}],
+                [{"text": "💬 Enviar comprobante por WhatsApp", "url": url_whatsapp}],
                 [{"text": "🔙 Cancelar y Volver", "callback_data": "menu_principal"}]
             ]
         }
@@ -377,14 +440,22 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
 def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat_id, suscripciones_asociadas, enviar_foto_callback):
     cuenta_asociada = suscripciones_asociadas[0].get("Cuenta", "Por Asignar") if suscripciones_asociadas else "Por Asignar"
     servicio_asociado = suscripciones_asociadas[0].get("Servicio", "Disney+") if suscripciones_asociadas else "Disney+"
+    
+    if suscripciones_asociadas:
+        for s in suscripciones_asociadas:
+            if "pendiente" in str(s.get("Estado", "")).lower():
+                cuenta_asociada = s.get("Cuenta", "Por Asignar")
+                servicio_asociado = s.get("Servicio", "Disney+")
+                break
+
     if ADMIN_ID:
         texto_admin = (
-            "🔔 *¡NUEVO REPORTE DE PAGO (TEXTO)!* 🔔\n\n"
+            "🔔 *¡NUEVO REPORTE DE PAGO (TEXTO/REFERENCIA)!* 🔔\n\n"
             f"• *Cliente:* {nombre} (@{username})\n"
             f"• *Telegram ID:* `{str_chat_id}`\n"
             f"• *Servicio:* {servicio_asociado}\n"
             f"• *Cuenta:* {cuenta_asociada}\n"
-            f"• *Detalle:* `{texto}`"
+            f"• *Referencia/Detalle:* `{texto}`"
         )
         row_idx = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
         teclado_admin = {
@@ -395,7 +466,7 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
         }
         enviar_cb(int(ADMIN_ID), texto_admin, teclado_admin)
 
-    enviar_cb(chat_id, "✅ Reporte enviado con éxito al administrador.", get_main_menu_keyboard())
+    enviar_cb(chat_id, "✅ Reporte enviado con éxito al administrador. En breve verificaremos tu referencia.", get_main_menu_keyboard())
 
 
 # ==========================================
@@ -417,7 +488,6 @@ def registrar_cliente_si_no_existe(chat_id, nombre, username):
             return
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
-        # Columna 7 (G) corresponde a "Servicio"
         sheet.append_row([str(chat_id), nombre_completo, "Por Asignar", "Por Asignar", "", "Pendiente Pago", "Disney"])
     except Exception as e:
         print(f"Error registrando: {e}")
@@ -428,11 +498,10 @@ def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney
         registros = sheet.get_all_records()
         for idx, row in enumerate(registros, start=2):
             if str(row.get("Telegram_ID", "")).strip() == str_chat_id:
-                # Actualizamos el estado a pendiente y colocamos el servicio que eligió en la columna G (7)
                 sheet.update_cell(idx, 6, "Pendiente Pago")
                 sheet.update_cell(idx, 7, servicio)
                 return idx
-        sheet.append_row([str_chat_id, nombre, cuenta, "1", "", "Pendiente Pago", servicio])
+        sheet.append_row([str(chat_id), nombre, cuenta, "1", "", "Pendiente Pago", servicio])
         return len(registros) + 2
     except Exception as e:
         print(f"Error en fila pendiente: {e}")
