@@ -1,16 +1,47 @@
 import os
+import time
+import threading
 import requests
 from fastapi import FastAPI, Request
 from bot_logic import procesar_mensaje_bot
+from alertas import revisar_y_enviar_alertas_vencimiento  # <--- Importamos tu módulo de alertas
 
 app = FastAPI()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "TU_TOKEN_DE_TELEGRAM")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
+# =============================================================
+# HILO EN SEGUNDO PLANO PARA LAS ALERTAS DIARIAS
+# =============================================================
+def iniciar_reloj_alertas():
+    """Ejecuta la revisión de vencimientos cada 24 horas (86400 segundos) en segundo plano."""
+    def bucle_diario():
+        # Esperamos 30 segundos al encender el servidor para que FastAPI esté completamente listo
+        time.sleep(30)
+        
+        while True:
+            try:
+                print("⏰ Ejecutando revisión automática diaria de vencimientos...")
+                # Llamamos a tu función de alertas pasándole la función nativa que ya tienes en este archivo
+                revisar_y_enviar_alertas_vencimiento(enviar_mensaje_telegram)
+            except Exception as e:
+                print(f"Error en el bucle automático de alertas: {e}")
+                
+            # Esperar exactamente 24 horas (86400 segundos) antes de la próxima revisión
+            time.sleep(86400)
+
+    hilo = threading.Thread(target=bucle_diario, daemon=True)
+    hilo.start()
+    print("🚀 Reloj automático de alertas diarias iniciado correctamente en segundo plano.")
+
+
 @app.on_event("startup")
 def startup_event():
     print("¡El servidor, el lector de Gmail y el bot interactivo se han iniciado en Render!")
+    # INICIAMOS EL RELOJ DE ALERTAS AL ARRANCAR FASTAPI
+    iniciar_reloj_alertas()
+
 
 @app.get("/")
 def home():
