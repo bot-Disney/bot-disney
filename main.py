@@ -5,7 +5,7 @@ from sheets_db import consultar_suscripcion
 
 app = FastAPI()
 
-# Token de tu bot de Telegram (puedes dejarlo como variable de entorno o ponerlo directo)
+# Token de tu bot de Telegram (reemplaza o usa variable de entorno)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "TU_TOKEN_DE_TELEGRAM")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
@@ -19,19 +19,19 @@ def home():
 
 @app.post("/webhook")
 async def recibir_webhook(request: Request):
-    """Punto de entrada (webhook) que recibe los mensajes y botones presionados en Telegram."""
+    """Punto de entrada (webhook) que recibe los mensajes y botones de Telegram."""
     try:
         data = await request.json()
         
-        # Verificar si el mensaje contiene datos de un usuario o botón
+        # Verificar si el mensaje viene de Telegram
         if "message" in data:
             message = data["message"]
             chat_id = message["chat"]["id"]
             texto = message.get("text", "")
             
-            # Ejemplo: Si el usuario presiona o escribe algo relacionado con suscripción
+            # Si el usuario escribe o presiona algo relacionado con suscripción
             if "suscripción" in texto.lower() or texto == "/suscribcion":
-                # Consultar en Google Sheets usando la función que creamos
+                # Consultar los datos en Google Sheets
                 suscripcion = consultar_suscripcion(chat_id)
                 
                 if suscripcion:
@@ -39,7 +39,7 @@ async def recibir_webhook(request: Request):
                 else:
                     respuesta = "No se encontró ninguna suscripción activa para tu usuario."
                 
-                # Enviar respuesta de vuelta a Telegram
+                # Enviar la respuesta de vuelta al chat de Telegram
                 enviar_mensaje_telegram(chat_id, respuesta)
 
         return {"status": "ok"}
@@ -49,7 +49,7 @@ async def recibir_webhook(request: Request):
         return {"status": "error", "message": str(e)}
 
 def enviar_mensaje_telegram(chat_id, texto):
-    """Función auxiliar para enviar mensajes de texto por Telegram."""
+    """Función para enviar mensajes de texto de vuelta a Telegram."""
     url = f"{TELEGRAM_API_URL}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -61,8 +61,9 @@ def enviar_mensaje_telegram(chat_id, texto):
     except Exception as e:
         print(f"Error enviando mensaje a Telegram: {e}")
 
-# Esto asegura que Uvicorn escuche correctamente en el puerto dinámico de Render
+# Asegurar que Uvicorn escuche en el puerto dinámico que exige Render
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
+ 
