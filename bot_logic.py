@@ -2,7 +2,7 @@ import os
 import time
 import datetime
 from sheets_db import conectar_sheets
-from gmail_otp import obtener_ultimo_codigo_disney
+from gmail_otp import obtener_ultimo_codigo_disney, obtener_ultimo_codigo_netflix
 
 WHATSAPP_NUMERO = "584247091547"
 ADMIN_ID = str(os.getenv("ADMIN_TELEGRAM_ID", "")).strip()
@@ -15,7 +15,7 @@ COOLDOWN_SEGUNDOS = 180
 esperando_captura_pago = set()
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial con soporte para recepción de capturas de pago y reenvío al admin."""
+    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con recepción de capturas de pago y reenvío al admin."""
     
     str_chat_id = str(chat_id).strip()
     registrar_cliente_si_no_existe(chat_id, nombre, username)
@@ -30,6 +30,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         
         suscripciones = obtener_suscripciones_por_id(chat_id)
         cuenta_asociada = suscripciones[0].get("Cuenta", "Por Asignar") if suscripciones else "Por Asignar"
+        servicio_asociado = suscripciones[0].get("Servicio", "Disney+") if suscripciones else "Disney+"
         
         # Notificar y reenviar la foto al Administrador (A ti)
         if ADMIN_ID and enviar_foto_callback:
@@ -37,9 +38,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 "🔔 *¡NUEVO COMPROBANTE DE PAGO (FOTO)!* 🔔\n\n"
                 f"• *Cliente:* {nombre} (@{username})\n"
                 f"• *Telegram ID:* `{str_chat_id}`\n"
+                f"• *Servicio:* {servicio_asociado}\n"
                 f"• *Cuenta/Detalle:* {cuenta_asociada}"
             )
-            row_idx = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada)
+            row_idx = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
             
             teclado_admin = {
                 "inline_keyboard": [
@@ -71,7 +73,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     # Si manda texto normal mientras esperaba foto
     if not es_callback and str_chat_id in esperando_captura_pago and texto:
         esperando_captura_pago.remove(str_chat_id)
-        # Lo procesamos como referencia de texto normal
         procesar_texto_reporte(chat_id, texto, nombre, username, enviar_mensaje_callback, str_chat_id, suscripciones_asociadas=obtener_suscripciones_por_id(chat_id), enviar_foto_callback=enviar_foto_callback)
         return
 
@@ -99,10 +100,12 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 enviar_mensaje_callback(chat_id, "✅ No hay pagos pendientes en este momento.", get_back_keyboard())
             else:
                 for idx, row_idx, p in pendientes:
+                    srv_p = p.get("Servicio", "Disney+")
                     txt = (
                         f"🟡 *Pago Pendiente #{idx}* (Fila {row_idx})\n"
                         f"• *Cliente:* {p.get('Nombre')}\n"
                         f"• *Telegram ID:* `{p.get('Telegram_ID')}`\n"
+                        f"• *Servicio:* {srv_p}\n"
                         f"• *Cuenta:* {p.get('Cuenta')}"
                     )
                     teclado_aprobar = {
@@ -164,6 +167,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             tiene_por_renovar = False
 
             for idx, sub in enumerate(suscripciones, start=1):
+                servicio = str(sub.get("Servicio", "Disney+")).strip() or "Disney+"
                 cuenta = sub.get("Cuenta", "Por Asignar")
                 pantalla = str(sub.get("Pantalla", "Por Asignar"))
                 vencimiento = str(sub.get("Vencimiento", "Sin fecha")).strip() or "Sin fecha"
@@ -174,7 +178,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     tiene_por_renovar = True
 
                 bloques.append(
-                    f"🔹 *Suscripción #{idx}*\n"
+                    f"🔹 *Suscripción #{idx} ({servicio})*\n"
                     f"• *Cuenta:* `{cuenta}`\n"
                     f"• *Pantalla N°:* {pantalla}\n"
                     f"• *Vencimiento:* {vencimiento} {alerta_vencimiento}\n"
@@ -199,14 +203,16 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 enviar_mensaje_callback(chat_id, mensaje, teclado)
             return
 
-        suscripciones_activas = [s for s in obtener_suscripciones_por_id(chat_id) if s.get("Estado","").strip().lower() == "activo"]
+        suscripciones_activas = [s for s in obtener_suscripciones_por_id(chat_id) if s.get("Estado", "").strip().lower() == "activo"]
 
+        # Si el cliente tiene más de 1 pantalla activa (ej: Disney y Netflix), le damos a elegir
         if len(suscripciones_activas) > 1 and not accion.startswith("pedir_otp_"):
             botones_selector = []
-            for idx, sub in enumerate(suscripciones_activas, start=1):
+            for idx, sub in enumerate(suscripciones_activas):
+                srv = str(sub.get("Servicio", "Disney+")).strip() or "Disney+"
                 cta = sub.get("Cuenta", "Cuenta")
                 pnt = sub.get("Pantalla", "1")
-                botones_selector.append([{"text": f"📺 Pantalla {pnt} ({cta})", "callback_data": f"pedir_otp_{idx}"}])
+                botones_selector.append([{"text": f"📺 {srv} - Pantalla {pnt} ({cta})", "callback_data": f"pedir_otp_{idx}"}])
             botones_selector.append([{"text": "🔙 Volver", "callback_data": "menu_principal"}])
             
             mensaje = "📺 Tienes varias pantallas activas. *¿Para cuál pantalla deseas solicitar el código?*:"
@@ -216,47 +222,22 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 enviar_mensaje_callback(chat_id, mensaje, {"inline_keyboard": botones_selector})
             return
 
-        # Cooldown OTP
-        ahora = time.time()
-        if str_chat_id not in control_intentos_otp:
-            control_intentos_otp[str_chat_id] = {"intentos": 0, "ultimo_tiempo": 0}
-
-        datos_usuario = control_intentos_otp[str_chat_id]
-        if ahora - datos_usuario["ultimo_tiempo"] > COOLDOWN_SEGUNDOS:
-            datos_usuario["intentos"] = 0
-
-        if datos_usuario["intentos"] >= MAX_INTENTOS_RAPIDOS:
-            transcurrido = ahora - datos_usuario["ultimo_tiempo"]
-            if transcurrido < COOLDOWN_SEGUNDOS:
-                restante = int(COOLDOWN_SEGUNDOS - transcurrido)
-                mensaje = f"⏳ *LÍMITE ALCANZADO*\n\nEspera *{restante // 60}m {restante % 60}s* antes de pedir otro código."
-                teclado = get_back_keyboard()
-                if es_callback and editar_mensaje_callback:
-                    editar_mensaje_callback(chat_id, message_id, mensaje, teclado)
-                else:
-                    enviar_mensaje_callback(chat_id, mensaje, teclado)
-                return
-
-        datos_usuario["intentos"] += 1
-        datos_usuario["ultimo_tiempo"] = ahora
-
-        msg_espera = "🔍 Buscando código reciente en el correo de Disney+, un momento..."
-        if es_callback and editar_mensaje_callback:
-            editar_mensaje_callback(chat_id, message_id, msg_espera, get_back_keyboard())
-        else:
-            enviar_mensaje_callback(chat_id, msg_espera)
-
-        codigo = obtener_ultimo_codigo_disney()
-        mensaje = f"🔑 *Tu código de acceso de Disney+ es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu TV)_" if codigo else "⚠️ No se encontraron códigos nuevos."
-
-        teclado = get_back_keyboard()
-        if es_callback and editar_mensaje_callback:
-            editar_mensaje_callback(chat_id, message_id, mensaje, teclado)
-        else:
-            enviar_mensaje_callback(chat_id, mensaje, teclado)
+        # Si tiene 1 sola pantalla activa
+        servicio_seleccionado = str(suscripciones_activas[0].get("Servicio", "Disney")).strip().lower()
+        ejecutar_busqueda_otp(chat_id, str_chat_id, servicio_seleccionado, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
 
     elif accion.startswith("pedir_otp_"):
-        process_otp_direct(chat_id, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
+        try:
+            idx_sub = int(accion.split("_")[-1])
+            suscripciones_activas = [s for s in obtener_suscripciones_por_id(chat_id) if s.get("Estado", "").strip().lower() == "activo"]
+            if idx_sub < len(suscripciones_activas):
+                servicio_seleccionado = str(suscripciones_activas[idx_sub].get("Servicio", "Disney")).strip().lower()
+            else:
+                servicio_seleccionado = "disney"
+            ejecutar_busqueda_otp(chat_id, str_chat_id, servicio_seleccionado, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
+        except Exception as e:
+            print(f"Error en selector OTP: {e}")
+            enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error al seleccionar la pantalla. Intenta de nuevo.", get_back_keyboard())
 
     # -------------------------------------------------------------
     # SOLICITUD DE CAPTURA DE PAGO
@@ -304,7 +285,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, mensaje, teclado_extra)
 
     elif accion == "soporte" or "pago" in accion:
-        texto_wa = f"Hola, necesito soporte con mi servicio de Disney+. Mi ID es: {str_chat_id}."
+        texto_wa = f"Hola, necesito soporte con mi servicio de Streaming. Mi ID es: {str_chat_id}."
         url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_wa.replace(' ', '%20')}"
         teclado_whatsapp = {
             "inline_keyboard": [
@@ -324,17 +305,67 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         enviar_mensaje_callback(chat_id, mensaje, teclado)
 
 
+def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb, editar_cb, es_cb):
+    """Controla el cooldown anti-spam y busca el código de Disney+ o Netflix según el servicio."""
+    ahora = time.time()
+    if str_chat_id not in control_intentos_otp:
+        control_intentos_otp[str_chat_id] = {"intentos": 0, "ultimo_tiempo": 0}
+
+    datos_usuario = control_intentos_otp[str_chat_id]
+    if ahora - datos_usuario["ultimo_tiempo"] > COOLDOWN_SEGUNDOS:
+        datos_usuario["intentos"] = 0
+
+    if datos_usuario["intentos"] >= MAX_INTENTOS_RAPIDOS:
+        transcurrido = ahora - datos_usuario["ultimo_tiempo"]
+        if transcurrido < COOLDOWN_SEGUNDOS:
+            restante = int(COOLDOWN_SEGUNDOS - transcurrido)
+            mensaje = f"⏳ *LÍMITE ALCANZADO*\n\nEspera *{restante // 60}m {restante % 60}s* antes de pedir otro código."
+            teclado = get_back_keyboard()
+            if es_cb and editar_cb:
+                editar_cb(chat_id, message_id, mensaje, teclado)
+            else:
+                enviar_cb(chat_id, mensaje, teclado)
+            return
+
+    datos_usuario["intentos"] += 1
+    datos_usuario["ultimo_tiempo"] = ahora
+
+    es_netflix = "netflix" in servicio
+    nombre_plataforma = "Netflix" if es_netflix else "Disney+"
+
+    msg_espera = f"🔍 Buscando código reciente en el correo de *{nombre_plataforma}*, un momento..."
+    if es_cb and editar_cb:
+        editar_cb(chat_id, message_id, msg_espera, get_back_keyboard())
+    else:
+        enviar_cb(chat_id, msg_espera)
+
+    codigo = obtener_ultimo_codigo_netflix() if es_netflix else obtener_ultimo_codigo_disney()
+
+    if codigo:
+        mensaje = f"🔑 *Tu código de acceso de {nombre_plataforma} es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu pantalla)_"
+    else:
+        mensaje = f"⚠️ No se encontraron códigos nuevos de *{nombre_plataforma}*. Asegúrate de haberlo solicitado en tu TV hace unos segundos e intenta de nuevo."
+
+    teclado = get_back_keyboard()
+    if es_cb and editar_cb:
+        editar_cb(chat_id, message_id, mensaje, teclado)
+    else:
+        enviar_cb(chat_id, mensaje, teclado)
+
+
 def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat_id, suscripciones_asociadas, enviar_foto_callback):
     cuenta_asociada = suscripciones_asociadas[0].get("Cuenta", "Por Asignar") if suscripciones_asociadas else "Por Asignar"
+    servicio_asociado = suscripciones_asociadas[0].get("Servicio", "Disney+") if suscripciones_asociadas else "Disney+"
     if ADMIN_ID:
         texto_admin = (
             "🔔 *¡NUEVO REPORTE DE PAGO (TEXTO)!* 🔔\n\n"
             f"• *Cliente:* {nombre} (@{username})\n"
             f"• *Telegram ID:* `{str_chat_id}`\n"
+            f"• *Servicio:* {servicio_asociado}\n"
             f"• *Cuenta:* {cuenta_asociada}\n"
             f"• *Detalle:* `{texto}`"
         )
-        row_idx = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada)
+        row_idx = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
         teclado_admin = {
             "inline_keyboard": [
                 [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}"}],
@@ -344,21 +375,6 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
         enviar_cb(int(ADMIN_ID), texto_admin, teclado_admin)
 
     enviar_cb(chat_id, "✅ Reporte enviado con éxito al administrador.", get_main_menu_keyboard())
-
-def process_otp_direct(chat_id, message_id, enviar_cb, editar_cb, es_cb):
-    msg = "🔍 Buscando código reciente en el correo de Disney+..."
-    if es_cb and editar_cb:
-        editar_cb(chat_id, message_id, msg, get_back_keyboard())
-    else:
-        enviar_cb(chat_id, msg)
-        
-    codigo = obtener_ultimo_codigo_disney()
-    mensaje = f"🔑 *Tu código de acceso de Disney+ es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu TV)_" if codigo else "⚠️ No se encontraron códigos nuevos."
-    
-    if es_cb and editar_cb:
-        editar_cb(chat_id, message_id, mensaje, get_back_keyboard())
-    else:
-        enviar_cb(chat_id, mensaje, get_back_keyboard())
 
 
 # ==========================================
@@ -380,11 +396,12 @@ def registrar_cliente_si_no_existe(chat_id, nombre, username):
             return
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
-        sheet.append_row([str(chat_id), nombre_completo, "Por Asignar", "Por Asignar", "", "Pendiente Pago"])
+        # Columna 7 (G) corresponde a "Servicio"
+        sheet.append_row([str(chat_id), nombre_completo, "Por Asignar", "Por Asignar", "", "Pendiente Pago", "Disney"])
     except Exception as e:
         print(f"Error registrando: {e}")
 
-def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta):
+def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney"):
     try:
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
@@ -392,7 +409,7 @@ def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta):
             if str(row.get("Telegram_ID", "")).strip() == str_chat_id:
                 sheet.update_cell(idx, 6, "Pendiente Pago")
                 return idx
-        sheet.append_row([str_chat_id, nombre, cuenta, "1", "", "Pendiente Pago"])
+        sheet.append_row([str_chat_id, nombre, cuenta, "1", "", "Pendiente Pago", servicio])
         return len(registros) + 2
     except Exception as e:
         print(f"Error en fila pendiente: {e}")
@@ -468,7 +485,7 @@ def get_main_menu_keyboard():
     return {
         "inline_keyboard": [
             [{"text": "📲 Ver mis datos / Pantallas", "callback_data": "ver_datos"}],
-            [{"text": "🔑 Solicitar Código Disney", "callback_data": "obtener_codigo"}],
+            [{"text": "🔑 Solicitar Código", "callback_data": "obtener_codigo"}],
             [{"text": "🔄 Renovar (+30 días)", "callback_data": "renovar_suscripcion"}, {"text": "➕ Otra Pantalla", "callback_data": "comprar_extra"}],
             [{"text": "💬 Soporte / Pagos", "callback_data": "soporte"}]
         ]
