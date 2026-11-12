@@ -18,7 +18,7 @@ def home():
 
 @app.post("/webhook")
 async def recibir_webhook(request: Request):
-    """Recibe mensajes y clics de botones (callbacks) desde Telegram."""
+    """Recibe mensajes, clics de botones (callbacks) y fotos desde Telegram."""
     try:
         data = await request.json()
         
@@ -33,10 +33,8 @@ async def recibir_webhook(request: Request):
             nombre = cb["from"].get("first_name", "Cliente")
             username = cb["from"].get("username", "")
             
-            # Responder al callback de Telegram para quitar el reloj de carga del botón
             responder_callback_telegram(callback_id)
             
-            # Procesar la acción en la lógica del bot
             procesar_mensaje_bot(
                 chat_id=chat_id,
                 texto="",
@@ -49,8 +47,28 @@ async def recibir_webhook(request: Request):
                 callback_data=callback_data
             )
             
-        # 2. Si el usuario envió un mensaje de texto normal
-        elif "message" in data:
+        # 2. Si el usuario envió una FOTO / CAPTURA DE PANTALLA
+        elif "message" in data and "photo" in data["message"]:
+            message = data["message"]
+            chat_id = message["chat"]["id"]
+            nombre = message["from"].get("first_name", "Cliente")
+            username = message["from"].get("username", "")
+            
+            # Obtenemos el file_id de la foto con mayor resolución (el último de la lista)
+            photo_file_id = message["photo"][-1]["file_id"]
+            
+            procesar_mensaje_bot(
+                chat_id=chat_id,
+                texto="",
+                nombre=nombre,
+                username=username,
+                enviar_mensaje_callback=enviar_mensaje_telegram,
+                photo_file_id=photo_file_id,
+                enviar_foto_callback=enviar_foto_telegram
+            )
+
+        # 3. Si el usuario envió un mensaje de texto normal
+        elif "message" in data and "text" in data["message"]:
             message = data["message"]
             chat_id = message["chat"]["id"]
             texto = message.get("text", "")
@@ -62,7 +80,8 @@ async def recibir_webhook(request: Request):
                 texto=texto,
                 nombre=nombre,
                 username=username,
-                enviar_mensaje_callback=enviar_mensaje_telegram
+                enviar_mensaje_callback=enviar_mensaje_telegram,
+                enviar_foto_callback=enviar_foto_telegram
             )
 
         return {"status": "ok"}
@@ -87,6 +106,23 @@ def enviar_mensaje_telegram(chat_id, texto, teclado=None):
     except Exception as e:
         print(f"Error enviando mensaje a Telegram: {e}")
 
+def enviar_foto_telegram(chat_id, photo_file_id, caption, teclado=None):
+    """Reenvía una foto (captura de pago) con texto y botones al chat (ej: al Admin)."""
+    url = f"{TELEGRAM_API_URL}/sendPhoto"
+    payload = {
+        "chat_id": chat_id,
+        "photo": photo_file_id,
+        "caption": caption,
+        "parse_mode": "Markdown"
+    }
+    if teclado:
+        payload["reply_markup"] = teclado
+        
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"Error enviando foto a Telegram: {e}")
+
 def editar_mensaje_telegram(chat_id, message_id, texto, teclado=None):
     """Edita un mensaje existente para una experiencia más fluida."""
     url = f"{TELEGRAM_API_URL}/editMessageText"
@@ -102,7 +138,6 @@ def editar_mensaje_telegram(chat_id, message_id, texto, teclado=None):
     try:
         response = requests.post(url, json=payload)
         res_json = response.json()
-        # Si el contenido es idéntico y Telegram rechaza editar, enviamos uno nuevo como respaldo
         if not res_json.get("ok"):
             enviar_mensaje_telegram(chat_id, texto, teclado)
     except Exception as e:
