@@ -29,7 +29,6 @@ esperando_captura_pago = set()
 
 def obtener_tasa_usdt_hoy():
     """Consulta la tasa USDT/VES del día (Binance P2P con respaldo automático) sin bloquear el bot."""
-    # 1. Intento principal: Binance P2P (promedio de los primeros anuncios de venta USDT -> VES)
     try:
         url_binance = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
         payload = {
@@ -51,7 +50,6 @@ def obtener_tasa_usdt_hoy():
     except Exception as e:
         print(f"Aviso: No se pudo leer Binance P2P ({e}), probando respaldo...")
 
-    # 2. Respaldo: API pública monitor Venezuela (EnParalelo / USDT)
     try:
         res_alt = requests.get("https://pydolarve.org/api/v1/dollar?monitor=enparalelovzla", timeout=3)
         if res_alt.status_code == 200:
@@ -65,7 +63,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas por usuario."""
+    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas, perfiles sucesivos y antidoble clic."""
     
     str_chat_id = str(chat_id).strip()
     registrar_cliente_si_no_existe(chat_id, nombre, username)
@@ -140,7 +138,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # PANEL DE ADMINISTRADOR Y APROBACIÓN
+    # PANEL DE ADMINISTRADOR Y APROBACIÓN (CON ANTIDOBLE CLIC)
     # -------------------------------------------------------------
     if accion == "/admin":
         if ADMIN_ID and str_chat_id == ADMIN_ID:
@@ -184,7 +182,16 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             try:
                 row_idx = int(accion.split("_")[1])
-                exito, tid_cliente = aprobar_suscripcion_sheet(row_idx)
+                exito, tid_cliente, ya_estaba_activa = aprobar_suscripcion_sheet(row_idx)
+                
+                # Quitar botones del mensaje inmediatamente para evitar doble clic
+                if message_id:
+                    quitar_botones_telegram(chat_id, message_id)
+
+                if ya_estaba_activa:
+                    enviar_mensaje_callback(chat_id, f"ℹ️ La suscripción de la fila {row_idx} ya había sido aprobada previamente.", get_back_keyboard())
+                    return
+
                 if exito:
                     enviar_mensaje_callback(chat_id, f"✅ ¡Suscripción de la fila {row_idx} activada con éxito!", get_back_keyboard())
                     if tid_cliente:
@@ -201,6 +208,9 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion.startswith("rechazar_"):
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             row_idx = int(accion.split("_")[1])
+            # Quitar botones del mensaje inmediatamente para evitar doble clic
+            if message_id:
+                quitar_botones_telegram(chat_id, message_id)
             enviar_mensaje_callback(chat_id, f"❌ Pago de la fila {row_idx} marcado como rechazado/revisar.", get_back_keyboard())
         return
 
@@ -246,7 +256,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 bloques.append(
                     f"🔹 *Suscripción #{idx} ({servicio})*\n"
                     f"• *Cuenta:* `{cuenta}`\n"
-                    f"• *Pantalla N°:* {pantalla}\n"
+                    f"• *Perfil Asignado:* {pantalla}\n"
                     f"• *Vencimiento:* {vencimiento} {alerta_vencimiento}\n"
                     f"• *Estado:* {estado}"
                 )
@@ -276,8 +286,8 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             for idx, sub in enumerate(suscripciones_activas):
                 srv = str(sub.get("Servicio", "Disney+")).strip() or "Disney+"
                 cta = sub.get("Cuenta", "Cuenta")
-                pnt = sub.get("Pantalla", "1")
-                botones_selector.append([{"text": f"📺 {srv} - Pantalla {pnt} ({cta})", "callback_data": f"pedir_otp_{idx}"}])
+                pnt = sub.get("Pantalla", "Perfil 1")
+                botones_selector.append([{"text": f"📺 {srv} - {pnt} ({cta})", "callback_data": f"pedir_otp_{idx}"}])
             botones_selector.append([{"text": "🔙 Volver", "callback_data": "menu_principal"}])
             
             mensaje = "📺 Tienes varias pantallas activas. *¿Para cuál pantalla deseas solicitar el código?*:"
@@ -338,10 +348,9 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         esperando_captura_pago.add(str_chat_id)
         
         if tipo_operacion == "nueva":
-            # Si pidió "Otra Pantalla", SIEMPRE crea una fila nueva independiente sin pisar la anterior
+            # Si pidió "Otra Pantalla", crea una fila nueva independiente con Perfil sucesivo
             crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
         else:
-            # Si pidió "Renovar", actualiza la pantalla de ese servicio o crea fila si no tiene ninguna de ese servicio
             cuenta_asociada = "Por Asignar"
             suscripciones = obtener_suscripciones_por_id(chat_id)
             encontrado = False
@@ -405,6 +414,22 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         mensaje = "¡Hola! Selecciona una opción del menú de abajo:"
         teclado = get_main_menu_keyboard()
         enviar_mensaje_callback(chat_id, mensaje, teclado)
+
+
+def quitar_botones_telegram(chat_id, message_id):
+    """Elimina los botones inline de un mensaje (sea texto o foto) para evitar doble clic."""
+    token = os.getenv("TELEGRAM_TOKEN", "")
+    if not token:
+        return
+    url = f"https://api.telegram.org/bot{token}/editMessageReplyMarkup"
+    try:
+        requests.post(url, json={
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "reply_markup": {"inline_keyboard": []}
+        }, timeout=3)
+    except Exception as e:
+        print(f"No se pudieron quitar los botones: {e}")
 
 
 def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb, editar_cb, es_cb):
@@ -499,6 +524,16 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
 # ==========================================
 # FUNCIONES AUXILIARES DE GOOGLE SHEETS
 # ==========================================
+def obtener_siguiente_perfil_sucesivo(sheet, servicio="Disney"):
+    """Calcula el siguiente perfil correlativo (Perfil 1, Perfil 2, Perfil 3...) para evitar repetidos."""
+    try:
+        registros = sheet.get_all_records()
+        # Contamos cuántas filas existen ya para ese servicio para asignar el siguiente número
+        cantidad = sum(1 for r in registros if servicio.lower() in str(r.get("Servicio", "")).strip().lower())
+        return f"Perfil {cantidad + 1}"
+    except Exception:
+        return "Perfil 1"
+
 def obtener_suscripciones_por_id(chat_id):
     try:
         sheet = conectar_sheets()
@@ -520,16 +555,18 @@ def registrar_cliente_si_no_existe(chat_id, nombre, username):
             return
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
-        sheet.append_row([str(chat_id), nombre_completo, "Por Asignar", "Por Asignar", "", "Pendiente Pago", "Disney"])
+        perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, "Disney")
+        sheet.append_row([str(chat_id), nombre_completo, "Por Asignar", perfil_asignado, "", "Pendiente Pago", "Disney"])
     except Exception as e:
         print(f"Error registrando: {e}")
 
 def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disney"):
-    """Añade siempre una nueva fila en Google Sheets para una pantalla adicional sin tocar las existentes."""
+    """Añade siempre una nueva fila en Google Sheets con el perfil sucesivo (Perfil 1, Perfil 2, etc.)."""
     try:
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
-        sheet.append_row([str(str_chat_id), nombre_completo, "Por Asignar", "1", "", "Pendiente Pago", servicio])
+        perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
+        sheet.append_row([str(str_chat_id), nombre_completo, "Por Asignar", perfil_asignado, "", "Pendiente Pago", servicio])
     except Exception as e:
         print(f"Error creando fila nueva: {e}")
 
@@ -546,7 +583,8 @@ def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney
                     sheet.update_cell(idx, 6, "Pendiente Pago")
                     sheet.update_cell(idx, 7, servicio)
                     return idx
-        sheet.append_row([str(str_chat_id), nombre, cuenta, "1", "", "Pendiente Pago", servicio])
+        perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
+        sheet.append_row([str(str_chat_id), nombre, cuenta, perfil_asignado, "", "Pendiente Pago", servicio])
         return len(registros) + 2
     except Exception as e:
         print(f"Error en fila pendiente: {e}")
@@ -577,14 +615,19 @@ def aprobar_suscripcion_sheet(row_idx):
         registros = sheet.get_all_records()
         fila_actual = registros[row_idx - 2] if (row_idx - 2) < len(registros) else {}
         tid_cliente = fila_actual.get("Telegram_ID", "")
+        estado_actual = str(fila_actual.get("Estado", "")).strip().lower()
+
+        # Si ya estaba activa (por doble clic rápido), avisamos sin volver a sumar 30 días
+        if estado_actual == "activo":
+            return True, tid_cliente, True
 
         nueva_fecha = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
         sheet.update_cell(row_idx, 5, nueva_fecha)
         sheet.update_cell(row_idx, 6, "Activo")
-        return True, tid_cliente
+        return True, tid_cliente, False
     except Exception as e:
         print(f"Error aprobando: {e}")
-        return False, None
+        return False, None, False
 
 def verificar_alerta_vencimiento(vencimiento_str, estado_str):
     if estado_str.lower() != "activo":
