@@ -327,7 +327,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
                 bloques.append(
                     f"🔹 *Suscripción #{idx} ({servicio})*\n"
-                    f"• *Correo (Usuario):* `{correo_usuario}`\n"
+                    f"• *Correo:* `{correo_usuario}`\n"
                     f"• *Perfil Asignado:* {pantalla}\n"
                     f"• *Vencimiento:* {vencimiento} {alerta_vencimiento}\n"
                     f"• *Estado:* {estado}"
