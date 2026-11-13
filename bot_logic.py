@@ -66,6 +66,8 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas, perfiles sucesivos y antidoble clic."""
     
     str_chat_id = str(chat_id).strip()
+    registrar_cliente_si_no_existe(chat_id, nombre, username)
+    
     accion = callback_data if es_callback else texto.lower().strip()
 
     # -------------------------------------------------------------
@@ -92,7 +94,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 row_idx_pendiente = suscripciones[0].get("_row_index")
 
         if not row_idx_pendiente:
-            row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado, username)
+            row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
 
         # Notificar y reenviar la foto al Administrador
         if ADMIN_ID and enviar_foto_callback:
@@ -232,7 +234,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion == "ver_datos" or "cuenta" in accion:
         suscripciones = obtener_suscripciones_por_id(chat_id)
         if not suscripciones:
-            mensaje = "⚠️ Aún no tienes ninguna pantalla registrada con este ID de Telegram.\n\nSelecciona *➕ Otra Pantalla* o *🔄 Renovar* en el menú para comenzar."
+            mensaje = "⚠️ No tienes ninguna pantalla registrada con este ID de Telegram."
             teclado = get_back_keyboard()
         else:
             total = len(suscripciones)
@@ -346,7 +348,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         esperando_captura_pago.add(str_chat_id)
         
         if tipo_operacion == "nueva":
-            # Crea una fila nueva independiente con Perfil sucesivo y el servicio elegido
+            # Si pidió "Otra Pantalla", crea una fila nueva independiente con Perfil sucesivo
             crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
         else:
             cuenta_asociada = "Por Asignar"
@@ -361,7 +363,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             if not encontrado:
                 crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
             else:
-                obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_elegido, username)
+                obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_elegido)
 
         # Calculamos la tasa USDT del día y el total en Bolívares
         tasa_usdt = obtener_tasa_usdt_hoy()
@@ -496,7 +498,7 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
             row_idx_pendiente = suscripciones_asociadas[0].get("_row_index")
 
     if not row_idx_pendiente:
-        row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado, username)
+        row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
 
     if ADMIN_ID:
         texto_admin = (
@@ -526,6 +528,7 @@ def obtener_siguiente_perfil_sucesivo(sheet, servicio="Disney"):
     """Calcula el siguiente perfil correlativo (Perfil 1, Perfil 2, Perfil 3...) para evitar repetidos."""
     try:
         registros = sheet.get_all_records()
+        # Contamos cuántas filas existen ya para ese servicio para asignar el siguiente número
         cantidad = sum(1 for r in registros if servicio.lower() in str(r.get("Servicio", "")).strip().lower())
         return f"Perfil {cantidad + 1}"
     except Exception:
@@ -546,6 +549,17 @@ def obtener_suscripciones_por_id(chat_id):
         print(f"Error: {e}")
         return []
 
+def registrar_cliente_si_no_existe(chat_id, nombre, username):
+    try:
+        if obtener_suscripciones_por_id(chat_id):
+            return
+        sheet = conectar_sheets()
+        nombre_completo = f"{nombre} (@{username})" if username else nombre
+        perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, "Disney")
+        sheet.append_row([str(chat_id), nombre_completo, "Por Asignar", perfil_asignado, "", "Pendiente Pago", "Disney"])
+    except Exception as e:
+        print(f"Error registrando: {e}")
+
 def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disney"):
     """Añade siempre una nueva fila en Google Sheets con el perfil sucesivo (Perfil 1, Perfil 2, etc.)."""
     try:
@@ -556,7 +570,7 @@ def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disne
     except Exception as e:
         print(f"Error creando fila nueva: {e}")
 
-def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney", username=""):
+def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney"):
     """Actualiza solo la fila que coincida con el servicio a renovar (o que ya esté pendiente), sin tocar otras filas activas."""
     try:
         sheet = conectar_sheets()
@@ -569,9 +583,8 @@ def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney
                     sheet.update_cell(idx, 6, "Pendiente Pago")
                     sheet.update_cell(idx, 7, servicio)
                     return idx
-        nombre_completo = f"{nombre} (@{username})" if username else nombre
         perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
-        sheet.append_row([str(str_chat_id), nombre_completo, cuenta, perfil_asignado, "", "Pendiente Pago", servicio])
+        sheet.append_row([str(str_chat_id), nombre, cuenta, perfil_asignado, "", "Pendiente Pago", servicio])
         return len(registros) + 2
     except Exception as e:
         print(f"Error en fila pendiente: {e}")
@@ -604,6 +617,7 @@ def aprobar_suscripcion_sheet(row_idx):
         tid_cliente = fila_actual.get("Telegram_ID", "")
         estado_actual = str(fila_actual.get("Estado", "")).strip().lower()
 
+        # Si ya estaba activa (por doble clic rápido), avisamos sin volver a sumar 30 días
         if estado_actual == "activo":
             return True, tid_cliente, True
 
