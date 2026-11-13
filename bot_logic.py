@@ -11,8 +11,8 @@ ADMIN_ID = str(os.getenv("ADMIN_TELEGRAM_ID", "")).strip()
 # =============================================================
 # CONFIGURACIÓN DE PRECIOS (USD/USDT) Y DATOS DE PAGO MÓVIL
 # =============================================================
-PRECIO_DISNEY_USD = 5.0   # Ajusta aquí el precio en USD/USDT de Disney+
-PRECIO_NETFLIX_USD = 4.5  # Ajusta aquí el precio en USD/USDT de Netflix
+PRECIO_DISNEY_USD = 5.0   # Precio en USD de Disney+
+PRECIO_NETFLIX_USD = 4.5  # Precio en USD de Netflix
 TASA_RESPALDO_BS = 65.0   # Tasa de respaldo por si fallan las consultas externas
 
 PAGO_MOVIL_BANCO = "🏦 Provincial (0108)"
@@ -66,8 +66,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas, perfiles sucesivos y antidoble clic."""
     
     str_chat_id = str(chat_id).strip()
-    registrar_cliente_si_no_existe(chat_id, nombre, username)
-    
     accion = callback_data if es_callback else texto.lower().strip()
 
     # -------------------------------------------------------------
@@ -94,9 +92,8 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 row_idx_pendiente = suscripciones[0].get("_row_index")
 
         if not row_idx_pendiente:
-            row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
+            row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado, username)
 
-        # Notificar y reenviar la foto al Administrador
         if ADMIN_ID and enviar_foto_callback:
             caption_admin = (
                 "🔔 *¡NUEVO COMPROBANTE DE PAGO (FOTO)!* 🔔\n\n"
@@ -108,7 +105,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             
             teclado_admin = {
                 "inline_keyboard": [
-                    [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}"}],
+                    [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}_digital"}],
                     [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_pendiente}"}]
                 ]
             }
@@ -131,14 +128,60 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         enviar_mensaje_callback(chat_id, texto_confirmacion, teclado_cliente)
         return
 
-    # Si manda texto normal mientras esperaba foto (ej: número de referencia)
-    if not es_callback and str_chat_id in esperando_captura_pago and texto:
+    if not es_callback and str_chat_id in esperando_captura_pago and texto and texto.lower().strip() not in ("efectivo", "/efectivo"):
         esperando_captura_pago.remove(str_chat_id)
         procesar_texto_reporte(chat_id, texto, nombre, username, enviar_mensaje_callback, str_chat_id, suscripciones_asociadas=obtener_suscripciones_por_id(chat_id), enviar_foto_callback=enviar_foto_callback)
         return
 
     # -------------------------------------------------------------
-    # PANEL DE ADMINISTRADOR Y APROBACIÓN (CON ANTIDOBLE CLIC)
+    # COMANDO SECRETO / TEXTO: PAGO EN EFECTIVO
+    # -------------------------------------------------------------
+    if accion == "efectivo" or accion == "/efectivo":
+        if str_chat_id in esperando_captura_pago:
+            esperando_captura_pago.remove(str_chat_id)
+
+        suscripciones = obtener_suscripciones_por_id(chat_id)
+        botones_selector = []
+
+        for sub in suscripciones:
+            r_idx = sub.get("_row_index")
+            srv = str(sub.get("Servicio", "Disney+")).strip()
+            pnt = str(sub.get("Pantalla", "Perfil 1"))
+            cta = str(sub.get("Cuenta", "Cuenta"))
+            botones_selector.append([{"text": f"🔄 Renovar {srv} - {pnt} ({cta})", "callback_data": f"efectivo_fila_{r_idx}"}])
+
+        botones_selector.append([{"text": f"➕ Nueva Pantalla Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": "efectivo_nuevo_disney"}])
+        botones_selector.append([{"text": f"➕ Nueva Pantalla Netflix (${PRECIO_NETFLIX_USD:.2f})", "callback_data": "efectivo_nuevo_netflix"}])
+        botones_selector.append([{"text": "🔙 Cancelar y Volver", "callback_data": "menu_principal"}])
+
+        mensaje = (
+            "💵 *PAGO EN EFECTIVO*\n\n"
+            "Selecciona qué pantalla vas a renovar o si deseas adquirir una pantalla adicional nueva:"
+        )
+        enviar_mensaje_callback(chat_id, mensaje, {"inline_keyboard": botones_selector})
+        return
+
+    elif accion.startswith("efectivo_fila_"):
+        try:
+            row_idx_elegido = int(accion.split("_")[-1])
+            notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_elegido, "Renovación", enviar_mensaje_callback, editar_mensaje_callback, message_id, es_callback)
+        except Exception as e:
+            print(f"Error en efectivo fila: {e}")
+            enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error. Intenta de nuevo.", get_back_keyboard())
+        return
+
+    elif accion.startswith("efectivo_nuevo_"):
+        try:
+            servicio_elegido = "Netflix" if "netflix" in accion else "Disney+"
+            nueva_fila_idx = crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
+            notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, nueva_fila_idx, "Pantalla Nueva", enviar_mensaje_callback, editar_mensaje_callback, message_id, es_callback)
+        except Exception as e:
+            print(f"Error en efectivo nuevo: {e}")
+            enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error. Intenta de nuevo.", get_back_keyboard())
+        return
+
+    # -------------------------------------------------------------
+    # PANEL DE ADMINISTRADOR Y APROBACIÓN
     # -------------------------------------------------------------
     if accion == "/admin":
         if ADMIN_ID and str_chat_id == ADMIN_ID:
@@ -162,16 +205,17 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             else:
                 for idx, row_idx, p in pendientes:
                     srv_p = p.get("Servicio", "Disney+")
+                    pnt_p = p.get("Pantalla", "Perfil 1")
                     txt = (
                         f"🟡 *Pago Pendiente #{idx}* (Fila {row_idx})\n"
                         f"• *Cliente:* {p.get('Nombre')}\n"
                         f"• *Telegram ID:* `{p.get('Telegram_ID')}`\n"
-                        f"• *Servicio:* {srv_p}\n"
+                        f"• *Servicio:* {srv_p} ({pnt_p})\n"
                         f"• *Cuenta:* {p.get('Cuenta')}"
                     )
                     teclado_aprobar = {
                         "inline_keyboard": [
-                            [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}"}],
+                            [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}_digital"}],
                             [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx}"}]
                         ]
                     }
@@ -181,10 +225,13 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion.startswith("aprobar_"):
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             try:
-                row_idx = int(accion.split("_")[1])
-                exito, tid_cliente, ya_estaba_activa = aprobar_suscripcion_sheet(row_idx)
+                partes_ap = accion.split("_")
+                row_idx = int(partes_ap[1])
+                es_efectivo = (len(partes_ap) > 2 and partes_ap[2].strip() == "efectivo")
+                metodo_pago = "Efectivo" if es_efectivo else "Pago Móvil / Digital"
+
+                exito, tid_cliente, ya_estaba_activa, nombre_cliente, srv_aprobado, perfil_asignado, tipo_operacion = aprobar_suscripcion_sheet(row_idx)
                 
-                # Quitar botones del mensaje inmediatamente para evitar doble clic
                 if message_id:
                     quitar_botones_telegram(chat_id, message_id)
 
@@ -193,7 +240,23 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     return
 
                 if exito:
-                    enviar_mensaje_callback(chat_id, f"✅ ¡Suscripción de la fila {row_idx} activada con éxito!", get_back_keyboard())
+                    monto_venta = PRECIO_NETFLIX_USD if "netflix" in str(srv_aprobado).lower() else PRECIO_DISNEY_USD
+                    
+                    # REGISTRO CORRECTO EN VENTAS USANDO EL SERVICIO REAL DE ESA FILA (`srv_aprobado`)
+                    registrar_venta_en_historial(
+                        nombre_cliente, tid_cliente, srv_aprobado, perfil_asignado,
+                        monto_venta, tipo_operacion, metodo_pago
+                    )
+
+                    enviar_mensaje_callback(
+                        chat_id,
+                        f"✅ ¡Fila {row_idx} activada y registrada en *Ventas*!\n"
+                        f"• *Servicio:* {srv_aprobado}\n"
+                        f"• *Perfil:* {perfil_asignado}\n"
+                        f"• *Tipo:* {tipo_operacion}\n"
+                        f"• *Método:* {metodo_pago}",
+                        get_back_keyboard()
+                    )
                     if tid_cliente:
                         try:
                             enviar_mensaje_callback(int(tid_cliente), "🎉 *¡Tu pago ha sido verificado y aprobado!*\n\nTu servicio ya se encuentra *Activo* por 30 días más. ¡Disfruta tu contenido!", get_main_menu_keyboard())
@@ -208,14 +271,13 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion.startswith("rechazar_"):
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             row_idx = int(accion.split("_")[1])
-            # Quitar botones del mensaje inmediatamente para evitar doble clic
             if message_id:
                 quitar_botones_telegram(chat_id, message_id)
             enviar_mensaje_callback(chat_id, f"❌ Pago de la fila {row_idx} marcado como rechazado/revisar.", get_back_keyboard())
         return
 
     # -------------------------------------------------------------
-    # MENÚ PRINCIPAL Y FUNCIONES DE CLIENTE
+    # MENÚ PRINCIPAL Y CLIENTE
     # -------------------------------------------------------------
     elif accion == "menu_principal" or accion == "/start" or accion == "/menu":
         if str_chat_id in esperando_captura_pago:
@@ -234,7 +296,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion == "ver_datos" or "cuenta" in accion:
         suscripciones = obtener_suscripciones_por_id(chat_id)
         if not suscripciones:
-            mensaje = "⚠️ No tienes ninguna pantalla registrada con este ID de Telegram."
+            mensaje = "⚠️ Aún no tienes ninguna pantalla registrada con este ID de Telegram.\n\nSelecciona *➕ Otra Pantalla* o *🔄 Renovar* en el menú para comenzar."
             teclado = get_back_keyboard()
         else:
             total = len(suscripciones)
@@ -243,11 +305,12 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             tiene_por_renovar = False
 
             for idx, sub in enumerate(suscripciones, start=1):
-                servicio = str(sub.get("Servicio", "Disney+")).strip() or "Disney+"
-                cuenta = sub.get("Cuenta", "Por Asignar")
-                pantalla = str(sub.get("Pantalla", "Por Asignar"))
-                vencimiento = str(sub.get("Vencimiento", "Sin fecha")).strip() or "Sin fecha"
-                estado = str(sub.get("Estado", "Pendiente Pago")).strip()
+                # LECTURA ROBUSTA: Normalizamos la clave del diccionario para evitar que falle si la columna se llama "Servicio" o variantes
+                servicio = str(sub.get("Servicio", sub.get("servicio", "Disney+"))).strip() or "Disney+"
+                cuenta = str(sub.get("Cuenta", sub.get("cuenta", "Por Asignar"))).strip()
+                pantalla = str(sub.get("Pantalla", sub.get("pantalla", "Perfil 1"))).strip()
+                vencimiento = str(sub.get("Vencimiento", sub.get("vencimiento", "Sin fecha"))).strip() or "Sin fecha"
+                estado = str(sub.get("Estado", sub.get("estado", "Pendiente Pago"))).strip()
                 
                 alerta_vencimiento = verificar_alerta_vencimiento(vencimiento, estado)
                 if "Vencida" in alerta_vencimiento or "Vence" in alerta_vencimiento or estado.lower() != "activo":
@@ -286,7 +349,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             for idx, sub in enumerate(suscripciones_activas):
                 srv = str(sub.get("Servicio", "Disney+")).strip() or "Disney+"
                 cta = sub.get("Cuenta", "Cuenta")
-                pnt = sub.get("Pantalla", "Perfil 1")
+                pnt = str(sub.get("Pantalla", "Perfil 1"))
                 botones_selector.append([{"text": f"📺 {srv} - {pnt} ({cta})", "callback_data": f"pedir_otp_{idx}"}])
             botones_selector.append([{"text": "🔙 Volver", "callback_data": "menu_principal"}])
             
@@ -313,23 +376,58 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             print(f"Error en selector OTP: {e}")
             enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error al seleccionar la pantalla. Intenta de nuevo.", get_back_keyboard())
 
-    # -------------------------------------------------------------
-    # SELECCIÓN DE SERVICIO + DATOS DE PAGO MÓVIL Y TASA USDT
-    # -------------------------------------------------------------
-    elif accion == "renovar_suscripcion" or accion == "comprar_extra":
-        es_compra_nueva = (accion == "comprar_extra")
-        tipo_operacion = "nueva" if es_compra_nueva else "renovar"
-        
+    elif accion == "renovar_suscripcion":
+        suscripciones = obtener_suscripciones_por_id(chat_id)
+        if not suscripciones:
+            procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback, message_id, True, "comprar_extra", None, enviar_foto_callback)
+            return
+
+        if len(suscripciones) == 1:
+            sub_unica = suscripciones[0]
+            row_idx_unico = sub_unica.get("_row_index")
+            srv_unico = str(sub_unica.get("Servicio", "Disney+")).strip().lower()
+            iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, "netflix" if "netflix" in srv_unico else "disney", "renovar", row_idx_unico, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
+        else:
+            botones_selector = []
+            for sub in suscripciones:
+                r_idx = sub.get("_row_index")
+                srv = str(sub.get("Servicio", "Disney+")).strip()
+                pnt = str(sub.get("Pantalla", "Perfil 1"))
+                cta = str(sub.get("Cuenta", "Cuenta"))
+                botones_selector.append([{"text": f"🔄 {srv} - {pnt} ({cta})", "callback_data": f"renovar_fila_{r_idx}"}])
+            
+            botones_selector.append([{"text": "🔙 Volver", "callback_data": "menu_principal"}])
+            mensaje = "🔄 Tienes múltiples pantallas. *¿Cuál de ellas deseas renovar por 30 días?*:"
+            
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, mensaje, {"inline_keyboard": botones_selector})
+            else:
+                enviar_mensaje_callback(chat_id, mensaje, {"inline_keyboard": botones_selector})
+
+    elif accion.startswith("renovar_fila_"):
+        try:
+            row_idx_elegido = int(accion.split("_")[-1])
+            sheet = conectar_sheets()
+            registros = sheet.get_all_records()
+            fila_obj = registros[row_idx_elegido - 2] if (row_idx_elegido - 2) < len(registros) else {}
+            srv_fila = str(fila_obj.get("Servicio", "Disney+")).strip().lower()
+            
+            iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, "netflix" if "netflix" in srv_fila else "disney", "renovar", row_idx_elegido, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
+        except Exception as e:
+            print(f"Error procesando renovación de fila específica: {e}")
+            enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error al seleccionar la pantalla. Intenta de nuevo.", get_back_keyboard())
+
+    elif accion == "comprar_extra":
         mensaje = (
-            "🛒 *SELECCIONA EL SERVICIO*\n\n"
-            f"¿Qué plataforma deseas {'comprar como nueva pantalla' if es_compra_nueva else 'renovar'} en este momento?\n\n"
+            "🛒 *SELECCIONA EL SERVICIO A COMPRAR*\n\n"
+            "¿Qué plataforma deseas comprar como nueva pantalla?\n\n"
             f"• *Disney+:* `${PRECIO_DISNEY_USD:.2f} USDT`\n"
             f"• *Netflix:* `${PRECIO_NETFLIX_USD:.2f} USDT`"
         )
         teclado_servicios = {
             "inline_keyboard": [
-                [{"text": f"📺 Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": f"pagar_servicio_disney_{tipo_operacion}"}],
-                [{"text": f"📺 Netflix (${PRECIO_NETFLIX_USD:.2f})", "callback_data": f"pagar_servicio_netflix_{tipo_operacion}"}],
+                [{"text": f"📺 Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": "pagar_servicio_disney_nueva"}],
+                [{"text": f"📺 Netflix (${PRECIO_NETFLIX_USD:.2f})", "callback_data": "pagar_servicio_netflix_nueva"}],
                 [{"text": "🔙 Volver", "callback_data": "menu_principal"}]
             ]
         }
@@ -339,61 +437,11 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, mensaje, teclado_servicios)
 
     elif accion.startswith("pagar_servicio_"):
-        partes = accion.split("_")
         es_netflix = "netflix" in accion
         servicio_elegido = "Netflix" if es_netflix else "Disney+"
-        tipo_operacion = partes[-1] if len(partes) > 3 else "renovar"
-        precio_usd = PRECIO_NETFLIX_USD if es_netflix else PRECIO_DISNEY_USD
         
-        esperando_captura_pago.add(str_chat_id)
-        
-        if tipo_operacion == "nueva":
-            # Si pidió "Otra Pantalla", crea una fila nueva independiente con Perfil sucesivo
-            crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
-        else:
-            cuenta_asociada = "Por Asignar"
-            suscripciones = obtener_suscripciones_por_id(chat_id)
-            encontrado = False
-            if suscripciones:
-                for s in suscripciones:
-                    if s.get("Servicio", "").strip().lower() == servicio_elegido.lower():
-                        cuenta_asociada = s.get("Cuenta", "Por Asignar")
-                        encontrado = True
-                        break
-            if not encontrado:
-                crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
-            else:
-                obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_elegido)
-
-        # Calculamos la tasa USDT del día y el total en Bolívares
-        tasa_usdt = obtener_tasa_usdt_hoy()
-        monto_bs = round(precio_usd * tasa_usdt, 2)
-
-        texto_wa = f"Hola, acabo de realizar el pago móvil de {monto_bs} Bs ({precio_usd} USDT) para {servicio_elegido}. Mi ID es: {str_chat_id}."
-        url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_wa.replace(' ', '%20')}"
-        
-        mensaje = (
-            f"💳 *DATOS DE PAGO — {servicio_elegido.upper()}*\n\n"
-            f"💵 *Monto:* `{precio_usd:.2f} USDT`\n"
-            f"📈 *Tasa del día:* `{tasa_usdt} Bs`\n"
-            f"💰 *Total a transferir:* `{monto_bs} Bs`\n\n"
-            f"📲 *Datos de Pago Móvil (Toca para copiar):*\n"
-            f"• *Banco:* {PAGO_MOVIL_BANCO}\n"
-            f"• *Cédula:* `{PAGO_MOVIL_CEDULA}`\n"
-            f"• *Teléfono:* `{PAGO_MOVIL_TELEFONO}`\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📸 *PASO FINAL:* Realiza el pago y **envía la captura de pantalla (o el número de referencia)** directamente por este chat para activar tus 30 días."
-        )
-        teclado_renovar = {
-            "inline_keyboard": [
-                [{"text": "💬 Enviar comprobante por WhatsApp", "url": url_whatsapp}],
-                [{"text": "🔙 Cancelar y Volver", "callback_data": "menu_principal"}]
-            ]
-        }
-        if es_callback and editar_mensaje_callback:
-            editar_mensaje_callback(chat_id, message_id, mensaje, teclado_renovar)
-        else:
-            enviar_mensaje_callback(chat_id, mensaje, teclado_renovar)
+        nueva_fila_idx = crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
+        iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, "netflix" if es_netflix else "disney", "nueva", nueva_fila_idx, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
 
     elif accion == "soporte" or "pago" in accion:
         texto_wa = f"Hola, necesito soporte con mi servicio de Streaming. Mi ID es: {str_chat_id}."
@@ -414,6 +462,98 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         mensaje = "¡Hola! Selecciona una opción del menú de abajo:"
         teclado = get_main_menu_keyboard()
         enviar_mensaje_callback(chat_id, mensaje, teclado)
+
+
+def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_target, detalle_operacion, enviar_cb, editar_cb=None, message_id=None, es_cb=False):
+    """Actualiza la fila en Google Sheets como Pendiente y notifica al Admin el pago en efectivo."""
+    try:
+        sheet = conectar_sheets()
+        registros = sheet.get_all_records()
+        fila_obj = registros[row_idx_target - 2] if (row_idx_target - 2) < len(registros) else {}
+        servicio_elegido = fila_obj.get("Servicio", "Disney+")
+        perfil_asignado = fila_obj.get("Pantalla", "Perfil 1")
+        cuenta_asignada = fila_obj.get("Cuenta", "Por Asignar")
+        precio_usd = PRECIO_NETFLIX_USD if "netflix" in str(servicio_elegido).lower() else PRECIO_DISNEY_USD
+
+        sheet.update_cell(row_idx_target, 6, "Pendiente Pago")
+
+        mensaje_cliente = (
+            "💵 *PAGO EN EFECTIVO REGISTRADO*\n\n"
+            f"• *Operación:* {detalle_operacion}\n"
+            f"• *Servicio:* {servicio_elegido} ({perfil_asignado})\n"
+            f"• *Monto a cancelar:* `${precio_usd:.2f} USD`\n\n"
+            "👤 Entrega el efectivo al encargado del local para que proceda a verificar y activar tu cuenta."
+        )
+        if es_cb and editar_cb:
+            editar_cb(chat_id, message_id, mensaje_cliente, get_back_keyboard())
+        else:
+            enviar_cb(chat_id, mensaje_cliente, get_back_keyboard())
+
+        if ADMIN_ID:
+            texto_admin = (
+                "🔔 *¡NUEVO PAGO EN EFECTIVO REPORTADO!* 🔔\n\n"
+                f"• *Cliente:* {nombre} (@{username})\n"
+                f"• *Telegram ID:* `{str_chat_id}`\n"
+                f"• *Tipo:* {detalle_operacion}\n"
+                f"• *Servicio:* {servicio_elegido} ({perfil_asignado})\n"
+                f"• *Cuenta:* {cuenta_asignada}\n"
+                f"• *Monto esperado:* `${precio_usd:.2f} USD`"
+            )
+            teclado_admin = {
+                "inline_keyboard": [
+                    [{"text": "✅ Aprobar Efectivo (+30 días)", "callback_data": f"aprobar_{row_idx_target}_efectivo"}],
+                    [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_target}"}]
+                ]
+            }
+            enviar_cb(int(ADMIN_ID), texto_admin, teclado_admin)
+    except Exception as e:
+        print(f"Error procesando notificación de efectivo: {e}")
+        enviar_cb(chat_id, "⚠️ Ocurrió un error al registrar el pago en efectivo.", get_back_keyboard())
+
+
+def iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, servicio_clave, tipo_operacion, row_idx_target, message_id, enviar_cb, editar_cb, es_cb):
+    """Muestra los datos de pago móvil y tasa USDT configurando exactamente la fila objetivo."""
+    esperando_captura_pago.add(str_chat_id)
+    
+    es_netflix = (servicio_clave == "netflix")
+    servicio_elegido = "Netflix" if es_netflix else "Disney+"
+    precio_usd = PRECIO_NETFLIX_USD if es_netflix else PRECIO_DISNEY_USD
+
+    try:
+        sheet = conectar_sheets()
+        sheet.update_cell(row_idx_target, 6, "Pendiente Pago")
+        sheet.update_cell(row_idx_target, 7, servicio_elegido)
+    except Exception as e:
+        print(f"Error actualizando celda de pago: {e}")
+
+    tasa_usdt = obtener_tasa_usdt_hoy()
+    monto_bs = round(precio_usd * tasa_usdt, 2)
+
+    texto_wa = f"Hola, acabo de realizar el pago móvil de {monto_bs} Bs ({precio_usd} USDT) para {servicio_elegido}. Mi ID es: {str_chat_id}."
+    url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_wa.replace(' ', '%20')}"
+    
+    mensaje = (
+        f"💳 *DATOS DE PAGO — {servicio_elegido.upper()}*\n\n"
+        f"💵 *Monto:* `{precio_usd:.2f} USDT`\n"
+        f"📈 *Tasa del día:* `{tasa_usdt} Bs`\n"
+        f"💰 *Total a transferir:* `{monto_bs} Bs`\n\n"
+        f"📲 *Datos de Pago Móvil (Toca para copiar):*\n"
+        f"• *Banco:* {PAGO_MOVIL_BANCO}\n"
+        f"• *Cédula:* `{PAGO_MOVIL_CEDULA}`\n"
+        f"• *Teléfono:* `{PAGO_MOVIL_TELEFONO}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📸 *PASO FINAL:* Realiza el pago y **envía la captura de pantalla (o el número de referencia)** directamente por este chat para activar tus 30 días."
+    )
+    teclado_renovar = {
+        "inline_keyboard": [
+            [{"text": "💬 Enviar comprobante por WhatsApp", "url": url_whatsapp}],
+            [{"text": "🔙 Cancelar y Volver", "callback_data": "menu_principal"}]
+        ]
+    }
+    if es_cb and editar_cb:
+        editar_cb(chat_id, message_id, mensaje, teclado_renovar)
+    else:
+        enviar_cb(chat_id, mensaje, teclado_renovar)
 
 
 def quitar_botones_telegram(chat_id, message_id):
@@ -464,14 +604,14 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
     if es_cb and editar_cb:
         editar_cb(chat_id, message_id, msg_espera, get_back_keyboard())
     else:
-        enviar_cb(chat_id, msg_espera)
+        enviar_cb(msg_espera)
 
     codigo = obtener_ultimo_codigo_netflix() if es_netflix else obtener_ultimo_codigo_disney()
 
     if codigo:
         mensaje = f"🔑 *Tu código de acceso de {nombre_plataforma} es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu pantalla)_"
     else:
-        mensaje = f"⚠️ No se encontraron códigos nuevos de *{nombre_plataforma}*. Asegúrate de haberlo solicitado en tu TV hace unos segundos e intenta de nuevo."
+        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado in tu TV hace unos segundos e intenta de nuevo."
 
     teclado = get_back_keyboard()
     if es_cb and editar_cb:
@@ -498,7 +638,7 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
             row_idx_pendiente = suscripciones_asociadas[0].get("_row_index")
 
     if not row_idx_pendiente:
-        row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado)
+        row_idx_pendiente = obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta_asociada, servicio_asociado, username)
 
     if ADMIN_ID:
         texto_admin = (
@@ -512,7 +652,7 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
         
         teclado_admin = {
             "inline_keyboard": [
-                [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}"}],
+                [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}_digital"}],
                 [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_pendiente}"}]
             ]
         }
@@ -525,10 +665,10 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
 # FUNCIONES AUXILIARES DE GOOGLE SHEETS
 # ==========================================
 def obtener_siguiente_perfil_sucesivo(sheet, servicio="Disney"):
-    """Calcula el siguiente perfil correlativo (Perfil 1, Perfil 2, Perfil 3...) para evitar repetidos."""
+    """Calcula el siguiente perfil correlativo contando exclusivamente las filas de esa misma plataforma para ese cliente (o en general)."""
     try:
         registros = sheet.get_all_records()
-        # Contamos cuántas filas existen ya para ese servicio para asignar el siguiente número
+        # Contamos cuántas filas existen en la hoja que correspondan a este servicio exacto
         cantidad = sum(1 for r in registros if servicio.lower() in str(r.get("Servicio", "")).strip().lower())
         return f"Perfil {cantidad + 1}"
     except Exception:
@@ -549,29 +689,19 @@ def obtener_suscripciones_por_id(chat_id):
         print(f"Error: {e}")
         return []
 
-def registrar_cliente_si_no_existe(chat_id, nombre, username):
-    try:
-        if obtener_suscripciones_por_id(chat_id):
-            return
-        sheet = conectar_sheets()
-        nombre_completo = f"{nombre} (@{username})" if username else nombre
-        perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, "Disney")
-        sheet.append_row([str(chat_id), nombre_completo, "Por Asignar", perfil_asignado, "", "Pendiente Pago", "Disney"])
-    except Exception as e:
-        print(f"Error registrando: {e}")
-
 def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disney"):
-    """Añade siempre una nueva fila en Google Sheets con el perfil sucesivo (Perfil 1, Perfil 2, etc.)."""
+    """Crea una nueva fila asegurándose de registrar el servicio correcto (Netflix o Disney) y su perfil sucesivo."""
     try:
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
         perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
         sheet.append_row([str(str_chat_id), nombre_completo, "Por Asignar", perfil_asignado, "", "Pendiente Pago", servicio])
+        return len(sheet.get_all_records()) + 1
     except Exception as e:
         print(f"Error creando fila nueva: {e}")
+        return 2
 
-def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney"):
-    """Actualiza solo la fila que coincida con el servicio a renovar (o que ya esté pendiente), sin tocar otras filas activas."""
+def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney", username=""):
     try:
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
@@ -583,9 +713,10 @@ def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney
                     sheet.update_cell(idx, 6, "Pendiente Pago")
                     sheet.update_cell(idx, 7, servicio)
                     return idx
+        nombre_completo = f"{nombre} (@{username})" if username else nombre
         perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
-        sheet.append_row([str(str_chat_id), nombre, cuenta, perfil_asignado, "", "Pendiente Pago", servicio])
-        return len(registros) + 2
+        sheet.append_row([str(str_chat_id), nombre_completo, cuenta, perfil_asignado, "", "Pendiente Pago", servicio])
+        return len(sheet.get_all_records()) + 1
     except Exception as e:
         print(f"Error en fila pendiente: {e}")
         return 2
@@ -610,24 +741,75 @@ def obtener_clientes_pendientes():
         return []
 
 def aprobar_suscripcion_sheet(row_idx):
+    """Suma 30 días, extrae con precisión el servicio, el perfil y determina si fue Renovación o Pantalla Nueva."""
     try:
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
         fila_actual = registros[row_idx - 2] if (row_idx - 2) < len(registros) else {}
         tid_cliente = fila_actual.get("Telegram_ID", "")
+        nombre_cliente = fila_actual.get("Nombre", "Cliente")
+        
+        # EXTRACCIÓN CORRECTA DEL SERVICIO DESDE LA FILA REAL
+        servicio_fila = str(fila_actual.get("Servicio", "Disney+")).strip() or "Disney+"
+        perfil_asignado = str(fila_actual.get("Pantalla", "Perfil 1")).strip() or "Perfil 1"
+        vencimiento_actual_str = str(fila_actual.get("Vencimiento", "")).strip()
         estado_actual = str(fila_actual.get("Estado", "")).strip().lower()
 
-        # Si ya estaba activa (por doble clic rápido), avisamos sin volver a sumar 30 días
         if estado_actual == "activo":
-            return True, tid_cliente, True
+            return True, tid_cliente, True, nombre_cliente, servicio_fila, perfil_asignado, "Renovación"
 
-        nueva_fecha = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        # DETECCIÓN CORRECTA DE TIPO: Si la cuenta ya tenía un vencimiento previo registrado, es Renovación. Si estaba en blanco, es Pantalla Nueva.
+        tipo_operacion = "Renovación" if vencimiento_actual_str and vencimiento_actual_str.lower() not in ("", "sin fecha") else "Pantalla Nueva"
+
+        fecha_base = datetime.date.today()
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                if vencimiento_actual_str:
+                    fecha_venc_actual = datetime.datetime.strptime(vencimiento_actual_str, fmt).date()
+                    if fecha_venc_actual >= datetime.date.today():
+                        fecha_base = fecha_venc_actual
+                break
+            except ValueError:
+                continue
+
+        nueva_fecha = (fecha_base + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        
         sheet.update_cell(row_idx, 5, nueva_fecha)
         sheet.update_cell(row_idx, 6, "Activo")
-        return True, tid_cliente, False
+        
+        return True, tid_cliente, False, nombre_cliente, servicio_fila, perfil_asignado, tipo_operacion
     except Exception as e:
-        print(f"Error aprobando: {e}")
-        return False, None, False
+        print(f"Error aprobando suscripción: {e}")
+        return False, None, False, "", "Disney+", "Perfil 1", "Renovación"
+
+def registrar_venta_en_historial(nombre_cliente, tid_cliente, servicio, perfil, monto_usd, tipo_operacion, metodo_pago):
+    """Registra la venta en la hoja 'Ventas' guardando estrictamente el servicio que se aprobó."""
+    try:
+        sheet_principal = conectar_sheets()
+        spreadsheet = sheet_principal.spreadsheet
+        encabezados_esperados = ["Fecha y Hora", "Cliente", "Telegram ID", "Servicio", "Perfil Asignado", "Monto USD", "Tipo", "Método Pago"]
+        try:
+            sheet_ventas = spreadsheet.worksheet("Ventas")
+            fila_1 = sheet_ventas.row_values(1)
+            if len(fila_1) < 8:
+                sheet_ventas.update("A1:H1", [encabezados_esperados])
+        except Exception:
+            sheet_ventas = spreadsheet.add_worksheet(title="Ventas", rows="1000", cols="8")
+            sheet_ventas.append_row(encabezados_esperados)
+
+        fecha_hora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sheet_ventas.append_row([
+            fecha_hora,
+            str(nombre_cliente),
+            str(tid_cliente),
+            str(servicio), # <- Aquí se graba exactamente Netflix o Disney según corresponda
+            str(perfil),
+            f"${float(monto_usd):.2f}",
+            str(tipo_operacion),
+            str(metodo_pago)
+        ])
+    except Exception as e:
+        print(f"Error al registrar la venta en el historial: {e}")
 
 def verificar_alerta_vencimiento(vencimiento_str, estado_str):
     if estado_str.lower() != "activo":
