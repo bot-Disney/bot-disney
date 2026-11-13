@@ -222,7 +222,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                         f"• *Cliente:* {safe_get(p, 'Nombre')}\n"
                         f"• *Telegram ID:* `{safe_get(p, 'Telegram_ID')}`\n"
                         f"• *Servicio:* {srv_p} ({pnt_p})\n"
-                        f"• *Cuenta:* {safe_get(p, 'Cuenta')}"
+                        f"• *Cuenta/Correo:* {safe_get(p, 'Cuenta')}"
                     )
                     teclado_aprobar = {
                         "inline_keyboard": [
@@ -316,7 +316,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
             for idx, sub in enumerate(suscripciones, start=1):
                 servicio = safe_get(sub, "Servicio", "Disney+")
-                cuenta = safe_get(sub, "Cuenta", "Por Asignar")
+                correo_usuario = safe_get(sub, "Cuenta", "Por Asignar") # Aquí se muestra únicamente el correo/usuario
                 pantalla = safe_get(sub, "Pantalla", "Perfil 1")
                 vencimiento = safe_get(sub, "Vencimiento", "Sin fecha")
                 estado = safe_get(sub, "Estado", "Pendiente Pago")
@@ -327,7 +327,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
                 bloques.append(
                     f"🔹 *Suscripción #{idx} ({servicio})*\n"
-                    f"• *Cuenta:* `{cuenta}`\n"
+                    f"• *Correo (Usuario):* `{correo_usuario}`\n"
                     f"• *Perfil Asignado:* {pantalla}\n"
                     f"• *Vencimiento:* {vencimiento} {alerta_vencimiento}\n"
                     f"• *Estado:* {estado}"
@@ -474,7 +474,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
 
 def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_target, detalle_operacion, enviar_cb, editar_cb=None, message_id=None, es_cb=False):
-    """Actualiza la fila en Google Sheets como Pendiente y notifica al Admin el pago en efectivo."""
     try:
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
@@ -505,7 +504,7 @@ def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_targ
                 f"• *Telegram ID:* `{str_chat_id}`\n"
                 f"• *Tipo:* {detalle_operacion}\n"
                 f"• *Servicio:* {servicio_elegido} ({perfil_asignado})\n"
-                f"• *Cuenta:* {cuenta_asignada}\n"
+                f"• *Correo/Cuenta:* {cuenta_asignada}\n"
                 f"• *Monto esperado:* `${precio_usd:.2f} USD`"
             )
             teclado_admin = {
@@ -521,7 +520,6 @@ def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_targ
 
 
 def iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, servicio_clave, tipo_operacion, row_idx_target, message_id, enviar_cb, editar_cb, es_cb):
-    """Muestra los datos de pago móvil y tasa USDT configurando exactamente la fila objetivo."""
     esperando_captura_pago.add(str_chat_id)
     
     es_netflix = (servicio_clave == "netflix")
@@ -653,7 +651,7 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
             f"• *Cliente:* {nombre} (@{username})\n"
             f"• *Telegram ID:* `{str_chat_id}`\n"
             f"• *Servicio:* {servicio_asociado}\n"
-            f"• *Cuenta:* {cuenta_asociada}\n"
+            f"• *Cuenta/Correo:* {cuenta_asociada}\n"
             f"• *Referencia/Detalle:* `{texto}`"
         )
         
@@ -672,7 +670,6 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
 # FUNCIONES AUXILIARES DE GOOGLE SHEETS
 # ==========================================
 def obtener_siguiente_perfil_sucesivo(sheet, servicio="Disney"):
-    """Calcula el siguiente perfil correlativo contando exclusivamente las filas de esa misma plataforma."""
     try:
         registros = sheet.get_all_records()
         count = 0
