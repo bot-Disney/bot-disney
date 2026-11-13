@@ -231,9 +231,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             try:
                 partes_ap = accion.split("_")
                 row_idx = int(partes_ap[1])
-                metodo_pago = "Efectivo" if (len(partes_ap) > 2 and partes_ap[2] == "efectivo") else "Pago Móvil / Digital"
+                es_efectivo = (len(partes_ap) > 2 and partes_ap[2].strip() == "efectivo")
+                metodo_pago = "Efectivo" if es_efectivo else "Pago Móvil / Digital"
 
-                exito, tid_cliente, ya_estaba_activa, nombre_cliente, srv_aprobado = aprobar_suscripcion_sheet(row_idx)
+                exito, tid_cliente, ya_estaba_activa, nombre_cliente, srv_aprobado, perfil_asignado, tipo_operacion = aprobar_suscripcion_sheet(row_idx)
                 
                 # Quitar botones del mensaje inmediatamente para evitar doble clic
                 if message_id:
@@ -244,11 +245,22 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     return
 
                 if exito:
-                    # Registramos automáticamente la venta en la pestaña 'Ventas' con su Tipo exacto
                     monto_venta = PRECIO_NETFLIX_USD if "netflix" in str(srv_aprobado).lower() else PRECIO_DISNEY_USD
-                    registrar_venta_en_historial(nombre_cliente, tid_cliente, srv_aprobado, monto_venta, metodo_pago)
+                    
+                    # Registramos en 'Ventas' separando Perfil, Tipo (Renovación/Pantalla Nueva) y Método Pago
+                    registrar_venta_en_historial(
+                        nombre_cliente, tid_cliente, srv_aprobado, perfil_asignado,
+                        monto_venta, tipo_operacion, metodo_pago
+                    )
 
-                    enviar_mensaje_callback(chat_id, f"✅ ¡Suscripción de la fila {row_idx} activada y registrada en *Ventas* ({metodo_pago})!", get_back_keyboard())
+                    enviar_mensaje_callback(
+                        chat_id,
+                        f"✅ ¡Fila {row_idx} activada y registrada en *Ventas*!\n"
+                        f"• *Perfil:* {perfil_asignado}\n"
+                        f"• *Tipo:* {tipo_operacion}\n"
+                        f"• *Método:* {metodo_pago}",
+                        get_back_keyboard()
+                    )
                     if tid_cliente:
                         try:
                             enviar_mensaje_callback(int(tid_cliente), "🎉 *¡Tu pago ha sido verificado y aprobado!*\n\nTu servicio ya se encuentra *Activo* por 30 días más. ¡Disfruta tu contenido!", get_main_menu_keyboard())
@@ -263,7 +275,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion.startswith("rechazar_"):
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             row_idx = int(accion.split("_")[1])
-            # Quitar botones del mensaje inmediatamente para evitar doble clic
             if message_id:
                 quitar_botones_telegram(chat_id, message_id)
             enviar_mensaje_callback(chat_id, f"❌ Pago de la fila {row_idx} marcado como rechazado/revisar.", get_back_keyboard())
@@ -739,7 +750,7 @@ def obtener_clientes_pendientes():
         return []
 
 def aprobar_suscripcion_sheet(row_idx):
-    """Suma 30 días respetando la fecha actual de vencimiento (si está vigente) o desde hoy, y actualiza la hoja."""
+    """Suma 30 días, obtiene el perfil asignado y clasifica automáticamente si fue Pantalla Nueva o Renovación."""
     try:
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
@@ -747,16 +758,18 @@ def aprobar_suscripcion_sheet(row_idx):
         tid_cliente = fila_actual.get("Telegram_ID", "")
         nombre_cliente = fila_actual.get("Nombre", "Cliente")
         servicio_fila = fila_actual.get("Servicio", "Disney+")
+        perfil_asignado = str(fila_actual.get("Pantalla", "Perfil 1")).strip() or "Perfil 1"
+        cuenta_actual = str(fila_actual.get("Cuenta", "")).strip().lower()
         vencimiento_actual_str = str(fila_actual.get("Vencimiento", "")).strip()
         estado_actual = str(fila_actual.get("Estado", "")).strip().lower()
 
         if estado_actual == "activo":
-            return True, tid_cliente, True, nombre_cliente, servicio_fila
+            return True, tid_cliente, True, nombre_cliente, servicio_fila, perfil_asignado, "Renovación"
 
-        # Fecha base por defecto (hoy)
+        # Si la cuenta aún está "Por Asignar" o vacía, es una compra de Pantalla Nueva; si ya tiene cuenta, es Renovación
+        tipo_operacion = "Pantalla Nueva" if cuenta_actual in ("", "por asignar", "efectivo local") else "Renovación"
+
         fecha_base = datetime.date.today()
-        
-        # Intentamos leer la fecha actual para sumar sobre ella si aún es futura o vigente
         for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
             try:
                 if vencimiento_actual_str:
@@ -767,28 +780,31 @@ def aprobar_suscripcion_sheet(row_idx):
             except ValueError:
                 continue
 
-        # Calculamos los nuevos 30 días exactos
         nueva_fecha = (fecha_base + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
         
-        # Actualizamos la celda de Vencimiento (Columna 5) y Estado (Columna 6)
         sheet.update_cell(row_idx, 5, nueva_fecha)
         sheet.update_cell(row_idx, 6, "Activo")
         
-        return True, tid_cliente, False, nombre_cliente, servicio_fila
+        return True, tid_cliente, False, nombre_cliente, servicio_fila, perfil_asignado, tipo_operacion
     except Exception as e:
         print(f"Error aprobando suscripción: {e}")
-        return False, None, False, "", ""
+        return False, None, False, "", "", "Perfil 1", "Renovación"
 
-def registrar_venta_en_historial(nombre_cliente, tid_cliente, servicio, monto_usd, tipo_operacion):
-    """Registra de manera automática cada venta aprobada en la pestaña 'Ventas' con la columna Tipo."""
+def registrar_venta_en_historial(nombre_cliente, tid_cliente, servicio, perfil, monto_usd, tipo_operacion, metodo_pago):
+    """Registra la venta en la pestaña 'Ventas' con Perfil Asignado, Tipo y Método de Pago."""
     try:
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
+        encabezados_esperados = ["Fecha y Hora", "Cliente", "Telegram ID", "Servicio", "Perfil Asignado", "Monto USD", "Tipo", "Método Pago"]
         try:
             sheet_ventas = spreadsheet.worksheet("Ventas")
+            # Asegurar que los encabezados tengan las 8 columnas si la hoja ya existía con 6
+            fila_1 = sheet_ventas.row_values(1)
+            if len(fila_1) < 8:
+                sheet_ventas.update("A1:H1", [encabezados_esperados])
         except Exception:
-            sheet_ventas = spreadsheet.add_worksheet(title="Ventas", rows="1000", cols="6")
-            sheet_ventas.append_row(["Fecha y Hora", "Cliente", "Telegram ID", "Servicio", "Monto USD", "Tipo"])
+            sheet_ventas = spreadsheet.add_worksheet(title="Ventas", rows="1000", cols="8")
+            sheet_ventas.append_row(encabezados_esperados)
 
         fecha_hora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sheet_ventas.append_row([
@@ -796,8 +812,10 @@ def registrar_venta_en_historial(nombre_cliente, tid_cliente, servicio, monto_us
             str(nombre_cliente),
             str(tid_cliente),
             str(servicio),
+            str(perfil),
             f"${float(monto_usd):.2f}",
-            str(tipo_operacion)
+            str(tipo_operacion),
+            str(metodo_pago)
         ])
     except Exception as e:
         print(f"Error al registrar la venta en el historial: {e}")
