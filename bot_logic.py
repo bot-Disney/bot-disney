@@ -74,7 +74,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas, perfiles sucesivos y antidoble clic."""
+    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas, perfiles sucesivos y asignación de stock."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -316,7 +316,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
             for idx, sub in enumerate(suscripciones, start=1):
                 servicio = safe_get(sub, "Servicio", "Disney+")
-                correo_usuario = safe_get(sub, "Cuenta", "Por Asignar") # Aquí se muestra únicamente el correo/usuario
+                correo_usuario = safe_get(sub, "Cuenta", "Por Asignar")
                 pantalla = safe_get(sub, "Pantalla", "Perfil 1")
                 vencimiento = safe_get(sub, "Vencimiento", "Sin fecha")
                 estado = safe_get(sub, "Estado", "Pendiente Pago")
@@ -681,6 +681,50 @@ def obtener_siguiente_perfil_sucesivo(sheet, servicio="Disney"):
     except Exception:
         return "Perfil 1"
 
+
+def asignar_correo_desde_stock(sheet_principal, servicio_solicitado):
+    """Busca en la pestaña 'Cuentas' un correo disponible para el servicio y actualiza su stock."""
+    try:
+        spreadsheet = sheet_principal.spreadsheet
+        try:
+            sheet_cuentas = spreadsheet.worksheet("Cuentas")
+        except Exception:
+            return "Por Asignar" # Si no existe la pestaña Cuentas aún, deja Por Asignar
+
+        registros_cuentas = sheet_cuentas.get_all_records()
+        
+        for idx_c, cuenta_row in enumerate(registros_cuentas, start=2):
+            srv_cuenta = safe_get(cuenta_row, "Servicio", "").lower()
+            estado_cuenta = safe_get(cuenta_row, "Estado", "").lower()
+            
+            # Verificamos si coincide el servicio y está activa
+            if servicio_solicitado.lower() in srv_cuenta and estado_cuenta == "activa":
+                try:
+                    capacidad = int(safe_get(cuenta_row, "Capacidad Total", "5"))
+                    ocupados = int(safe_get(cuenta_row, "Perfiles Ocupados", "0"))
+                except ValueError:
+                    capacidad = 5
+                    ocupados = 0
+
+                if ocupados < capacidad:
+                    correo_encontrado = safe_get(cuenta_row, "Correo (Usuario)", safe_get(cuenta_row, "Correo", ""))
+                    
+                    # Actualizamos el contador de ocupados en la hoja Cuentas (+1)
+                    nuevos_ocupados = ocupados + 1
+                    sheet_cuentas.update_cell(idx_c, 5, nuevos_ocupados) # Columna E (Perfiles Ocupados)
+                    
+                    # Si al sumar llega al tope, cambiamos el estado a 'Llena'
+                    if nuevos_ocupados >= capacidad:
+                        sheet_cuentas.update_cell(idx_c, 6, "Llena") # Columna F (Estado)
+                        
+                    return correo_encontrado
+                    
+        return "Por Asignar"
+    except Exception as e:
+        print(f"Error asignando correo desde stock: {e}")
+        return "Por Asignar"
+
+
 def obtener_suscripciones_por_id(chat_id):
     try:
         sheet = conectar_sheets()
@@ -702,7 +746,11 @@ def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disne
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
         perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
-        sheet.append_row([str(str_chat_id), nombre_completo, "Por Asignar", perfil_asignado, "", "Pendiente Pago", servicio])
+        
+        # ASIGNACIÓN AUTOMÁTICA DEL CORREO DESDE LA HOJA CUENTAS
+        correo_asignado = asignar_correo_desde_stock(sheet, servicio)
+        
+        sheet.append_row([str(str_chat_id), nombre_completo, correo_asignado, perfil_asignado, "", "Pendiente Pago", servicio])
         return len(sheet.get_all_records()) + 1
     except Exception as e:
         print(f"Error creando fila nueva: {e}")
@@ -721,9 +769,14 @@ def obtener_o_crear_fila_pendiente(str_chat_id, nombre, cuenta, servicio="Disney
                     sheet.update_cell(idx, 6, "Pendiente Pago")
                     sheet.update_cell(idx, 7, servicio)
                     return idx
+                    
         nombre_completo = f"{nombre} (@{username})" if username else nombre
         perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
-        sheet.append_row([str(str_chat_id), nombre_completo, cuenta, perfil_asignado, "", "Pendiente Pago", servicio])
+        
+        # ASIGNACIÓN AUTOMÁTICA DEL CORREO DESDE LA HOJA CUENTAS
+        correo_asignado = asignar_correo_desde_stock(sheet, servicio)
+        
+        sheet.append_row([str(str_chat_id), nombre_completo, correo_asignado, perfil_asignado, "", "Pendiente Pago", servicio])
         return len(sheet.get_all_records()) + 1
     except Exception as e:
         print(f"Error en fila pendiente: {e}")
