@@ -318,18 +318,15 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion == "renovar_suscripcion":
         suscripciones = obtener_suscripciones_por_id(chat_id)
         if not suscripciones:
-            # Si no tiene ninguna, lo mandamos a comprar pantalla nueva directamente
             procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback, message_id, True, "comprar_extra", None, enviar_foto_callback)
             return
 
         if len(suscripciones) == 1:
-            # Si tiene una sola suscripción, vamos directo al pago de ese servicio exacto
             sub_unica = suscripciones[0]
             row_idx_unico = sub_unica.get("_row_index")
             srv_unico = str(sub_unica.get("Servicio", "Disney+")).strip().lower()
             iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, "netflix" if "netflix" in srv_unico else "disney", "renovar", row_idx_unico, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
         else:
-            # Si tiene varias pantallas, mostramos selector exacto de cuál va a renovar
             botones_selector = []
             for sub in suscripciones:
                 r_idx = sub.get("_row_index")
@@ -349,7 +346,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion.startswith("renovar_fila_"):
         try:
             row_idx_elegido = int(accion.split("_")[-1])
-            # Buscamos qué servicio es esta fila exacta
             sheet = conectar_sheets()
             registros = sheet.get_all_records()
             fila_obj = registros[row_idx_elegido - 2] if (row_idx_elegido - 2) < len(registros) else {}
@@ -386,7 +382,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         tipo_operacion = partes[-1] if len(partes) > 3 else "nueva"
         
         if tipo_operacion == "nueva":
-            # Creamos una fila nueva independiente
             nueva_fila_idx = crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
             iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, "netflix" if es_netflix else "disney", "nueva", nueva_fila_idx, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
 
@@ -421,7 +416,6 @@ def iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, servicio_clave,
 
     try:
         sheet = conectar_sheets()
-        # Actualizamos el estado de esa fila exacta a Pendiente Pago
         sheet.update_cell(row_idx_target, 6, "Pendiente Pago")
         sheet.update_cell(row_idx_target, 7, servicio_elegido)
     except Exception as e:
@@ -595,7 +589,6 @@ def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disne
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
         perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
-        # Estructura columnas: Telegram_ID | Nombre | Cuenta | Perfil | Vencimiento | Estado | Servicio
         sheet.append_row([str(str_chat_id), nombre_completo, "Por Asignar", perfil_asignado, "", "Pendiente Pago", servicio])
         return len(sheet.get_all_records()) + 1
     except Exception as e:
@@ -643,22 +636,38 @@ def obtener_clientes_pendientes():
         return []
 
 def aprobar_suscripcion_sheet(row_idx):
+    """Suma 30 días respetando la fecha actual de vencimiento (si está vigente) o desde hoy, y actualiza la hoja."""
     try:
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
         fila_actual = registros[row_idx - 2] if (row_idx - 2) < len(registros) else {}
         tid_cliente = fila_actual.get("Telegram_ID", "")
-        estado_actual = str(fila_actual.get("Estado", "")).strip().lower()
+        vencimiento_actual_str = str(fila_actual.get("Vencimiento", "")).strip()
 
-        if estado_actual == "activo":
-            return True, tid_cliente, True
+        # Fecha base por defecto (hoy)
+        fecha_base = datetime.date.today()
+        
+        # Intentamos leer la fecha actual para sumar sobre ella si aún es futura o vigente
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                if vencimiento_actual_str:
+                    fecha_venc_actual = datetime.datetime.strptime(vencimiento_actual_str, fmt).date()
+                    if fecha_venc_actual >= datetime.date.today():
+                        fecha_base = fecha_venc_actual
+                break
+            except ValueError:
+                continue
 
-        nueva_fecha = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        # Calculamos los nuevos 30 días exactos
+        nueva_fecha = (fecha_base + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        
+        # Actualizamos la celda de Vencimiento (Columna 5) y Estado (Columna 6)
         sheet.update_cell(row_idx, 5, nueva_fecha)
         sheet.update_cell(row_idx, 6, "Activo")
+        
         return True, tid_cliente, False
     except Exception as e:
-        print(f"Error aprobando: {e}")
+        print(f"Error aprobando suscripción: {e}")
         return False, None, False
 
 def verificar_alerta_vencimiento(vencimiento_str, estado_str):
