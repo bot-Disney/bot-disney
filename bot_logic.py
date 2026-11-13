@@ -181,7 +181,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             try:
                 row_idx = int(accion.split("_")[1])
-                exito, tid_cliente, ya_estaba_activa = aprobar_suscripcion_sheet(row_idx)
+                exito, tid_cliente, ya_estaba_activa, nombre_cliente, srv_aprobado = aprobar_suscripcion_sheet(row_idx)
                 
                 # Quitar botones del mensaje inmediatamente para evitar doble clic
                 if message_id:
@@ -192,7 +192,11 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     return
 
                 if exito:
-                    enviar_mensaje_callback(chat_id, f"✅ ¡Suscripción de la fila {row_idx} activada con éxito!", get_back_keyboard())
+                    # Registramos automáticamente la venta en la pestaña 'Ventas'
+                    monto_venta = PRECIO_NETFLIX_USD if "netflix" in str(srv_aprobado).lower() else PRECIO_DISNEY_USD
+                    registrar_venta_en_historial(nombre_cliente, tid_cliente, srv_aprobado, monto_venta, "Renovación / Activación")
+
+                    enviar_mensaje_callback(chat_id, f"✅ ¡Suscripción de la fila {row_idx} activada y registrada en el historial!", get_back_keyboard())
                     if tid_cliente:
                         try:
                             enviar_mensaje_callback(int(tid_cliente), "🎉 *¡Tu pago ha sido verificado y aprobado!*\n\nTu servicio ya se encuentra *Activo* por 30 días más. ¡Disfruta tu contenido!", get_main_menu_keyboard())
@@ -642,7 +646,13 @@ def aprobar_suscripcion_sheet(row_idx):
         registros = sheet.get_all_records()
         fila_actual = registros[row_idx - 2] if (row_idx - 2) < len(registros) else {}
         tid_cliente = fila_actual.get("Telegram_ID", "")
+        nombre_cliente = fila_actual.get("Nombre", "Cliente")
+        servicio_fila = fila_actual.get("Servicio", "Disney+")
         vencimiento_actual_str = str(fila_actual.get("Vencimiento", "")).strip()
+        estado_actual = str(fila_actual.get("Estado", "")).strip().lower()
+
+        if estado_actual == "activo":
+            return True, tid_cliente, True, nombre_cliente, servicio_fila
 
         # Fecha base por defecto (hoy)
         fecha_base = datetime.date.today()
@@ -665,10 +675,33 @@ def aprobar_suscripcion_sheet(row_idx):
         sheet.update_cell(row_idx, 5, nueva_fecha)
         sheet.update_cell(row_idx, 6, "Activo")
         
-        return True, tid_cliente, False
+        return True, tid_cliente, False, nombre_cliente, servicio_fila
     except Exception as e:
         print(f"Error aprobando suscripción: {e}")
-        return False, None, False
+        return False, None, False, "", ""
+
+def registrar_venta_en_historial(nombre_cliente, tid_cliente, servicio, monto_usd, tipo_operacion):
+    """Registra de manera automática cada venta aprobada en la pestaña 'Ventas' con la columna Tipo."""
+    try:
+        sheet_principal = conectar_sheets()
+        spreadsheet = sheet_principal.spreadsheet
+        try:
+            sheet_ventas = spreadsheet.worksheet("Ventas")
+        except Exception:
+            sheet_ventas = spreadsheet.add_worksheet(title="Ventas", rows="1000", cols="6")
+            sheet_ventas.append_row(["Fecha y Hora", "Cliente", "Telegram ID", "Servicio", "Monto USD", "Tipo"])
+
+        fecha_hora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sheet_ventas.append_row([
+            fecha_hora,
+            str(nombre_cliente),
+            str(tid_cliente),
+            str(servicio),
+            f"${float(monto_usd):.2f}",
+            str(tipo_operacion)
+        ])
+    except Exception as e:
+        print(f"Error al registrar la venta en el historial: {e}")
 
 def verificar_alerta_vencimiento(vencimiento_str, estado_str):
     if estado_str.lower() != "activo":
