@@ -106,7 +106,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             
             teclado_admin = {
                 "inline_keyboard": [
-                    [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}_digital"}],
+                    [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}"}],
                     [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_pendiente}"}]
                 ]
             }
@@ -130,45 +130,53 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # Si manda texto normal mientras esperaba foto (ej: número de referencia)
-    if not es_callback and str_chat_id in esperando_captura_pago and texto and texto.lower().strip() not in ("efectivo", "/efectivo"):
+    if not es_callback and str_chat_id in esperando_captura_pago and texto:
         esperando_captura_pago.remove(str_chat_id)
         procesar_texto_reporte(chat_id, texto, nombre, username, enviar_mensaje_callback, str_chat_id, suscripciones_asociadas=obtener_suscripciones_por_id(chat_id), enviar_foto_callback=enviar_foto_callback)
         return
 
     # -------------------------------------------------------------
-    # COMANDO SECRETO / TEXTO: PAGO EN EFECTIVO (RENOVAR O NUEVA)
+    # COMANDO SECRETO / TEXTO: PAGO EN EFECTIVO (CON SELECTOR DE PERFIL)
     # -------------------------------------------------------------
     if accion == "efectivo" or accion == "/efectivo":
-        if str_chat_id in esperando_captura_pago:
-            esperando_captura_pago.remove(str_chat_id)
-
         suscripciones = obtener_suscripciones_por_id(chat_id)
-        botones_selector = []
+        if not suscripciones:
+            # Si no tiene registros previos, le damos a elegir qué servicio quiere pagar en efectivo
+            mensaje = "💵 *PAGO EN EFECTIVO*\n\nNo tienes pantallas registradas. ¿Qué servicio deseas adquirir?"
+            teclado_servicios = {
+                "inline_keyboard": [
+                    [{"text": "📺 Disney+ (Nueva Pantalla)", "callback_data": "efectivo_nuevo_disney"}],
+                    [{"text": "📺 Netflix (Nueva Pantalla)", "callback_data": "efectivo_nuevo_netflix"}],
+                    [{"text": "🔙 Volver", "callback_data": "menu_principal"}]
+                ]
+            }
+            enviar_mensaje_callback(chat_id, mensaje, teclado_servicios)
+            return
 
-        # 1. Si ya tiene pantallas registradas, las listamos para renovar
-        for sub in suscripciones:
-            r_idx = sub.get("_row_index")
-            srv = str(sub.get("Servicio", "Disney+")).strip()
-            pnt = str(sub.get("Pantalla", "Perfil 1"))
-            cta = str(sub.get("Cuenta", "Cuenta"))
-            botones_selector.append([{"text": f"🔄 Renovar {srv} - {pnt} ({cta})", "callback_data": f"efectivo_fila_{r_idx}"}])
-
-        # 2. Siempre damos también las opciones para comprar una pantalla adicional nueva
-        botones_selector.append([{"text": f"➕ Nueva Pantalla Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": "efectivo_nuevo_disney"}])
-        botones_selector.append([{"text": f"➕ Nueva Pantalla Netflix (${PRECIO_NETFLIX_USD:.2f})", "callback_data": "efectivo_nuevo_netflix"}])
-        botones_selector.append([{"text": "🔙 Cancelar y Volver", "callback_data": "menu_principal"}])
-
-        mensaje = (
-            "💵 *PAGO EN EFECTIVO*\n\n"
-            "Selecciona qué pantalla vas a renovar o si deseas adquirir una pantalla adicional nueva:"
-        )
-        enviar_mensaje_callback(chat_id, mensaje, {"inline_keyboard": botones_selector})
+        if len(suscripciones) == 1:
+            # Si tiene una sola pantalla, la marcamos de una vez para efectivo en esa fila exacta
+            sub_unica = suscripciones[0]
+            row_idx_unico = sub_unica.get("_row_index")
+            notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_unico, enviar_mensaje_callback)
+        else:
+            # Si tiene varias, mostramos botones para que elija cuál va a pagar en efectivo
+            botones_selector = []
+            for sub in suscripciones:
+                r_idx = sub.get("_row_index")
+                srv = str(sub.get("Servicio", "Disney+")).strip()
+                pnt = str(sub.get("Pantalla", "Perfil 1"))
+                cta = str(sub.get("Cuenta", "Cuenta"))
+                botones_selector.append([{"text": f"💵 {srv} - {pnt} ({cta})", "callback_data": f"efectivo_fila_{r_idx}"}])
+            
+            botones_selector.append([{"text": "🔙 Volver", "callback_data": "menu_principal"}])
+            mensaje = "💵 Tienes múltiples pantallas. *¿Cuál de ellas vas a pagar en efectivo?*:"
+            enviar_mensaje_callback(chat_id, mensaje, {"inline_keyboard": botones_selector})
         return
 
     elif accion.startswith("efectivo_fila_"):
         try:
             row_idx_elegido = int(accion.split("_")[-1])
-            notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_elegido, "Renovación (Efectivo)", enviar_mensaje_callback, editar_mensaje_callback, message_id, es_callback)
+            notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_elegido, enviar_mensaje_callback)
         except Exception as e:
             print(f"Error en efectivo fila: {e}")
             enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error. Intenta de nuevo.", get_back_keyboard())
@@ -178,7 +186,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         try:
             servicio_elegido = "Netflix" if "netflix" in accion else "Disney+"
             nueva_fila_idx = crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido)
-            notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, nueva_fila_idx, "Pantalla Nueva (Efectivo)", enviar_mensaje_callback, editar_mensaje_callback, message_id, es_callback)
+            notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, nueva_fila_idx, enviar_mensaje_callback)
         except Exception as e:
             print(f"Error en efectivo nuevo: {e}")
             enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error. Intenta de nuevo.", get_back_keyboard())
@@ -219,7 +227,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     )
                     teclado_aprobar = {
                         "inline_keyboard": [
-                            [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}_digital"}],
+                            [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}"}],
                             [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx}"}]
                         ]
                     }
@@ -229,10 +237,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion.startswith("aprobar_"):
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             try:
-                partes_ap = accion.split("_")
-                row_idx = int(partes_ap[1])
-                metodo_pago = "Efectivo" if (len(partes_ap) > 2 and partes_ap[2] == "efectivo") else "Pago Móvil / Digital"
-
+                row_idx = int(accion.split("_")[1])
                 exito, tid_cliente, ya_estaba_activa, nombre_cliente, srv_aprobado = aprobar_suscripcion_sheet(row_idx)
                 
                 # Quitar botones del mensaje inmediatamente para evitar doble clic
@@ -244,14 +249,14 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     return
 
                 if exito:
-                    # Registramos automáticamente la venta en la pestaña 'Ventas' con su Tipo exacto
+                    # Registramos automáticamente la venta en la pestaña 'Ventas'
                     monto_venta = PRECIO_NETFLIX_USD if "netflix" in str(srv_aprobado).lower() else PRECIO_DISNEY_USD
-                    registrar_venta_en_historial(nombre_cliente, tid_cliente, srv_aprobado, monto_venta, metodo_pago)
+                    registrar_venta_en_historial(nombre_cliente, tid_cliente, srv_aprobado, monto_venta, "Efectivo Local")
 
-                    enviar_mensaje_callback(chat_id, f"✅ ¡Suscripción de la fila {row_idx} activada y registrada en *Ventas* ({metodo_pago})!", get_back_keyboard())
+                    enviar_mensaje_callback(chat_id, f"✅ ¡Suscripción de la fila {row_idx} activada y registrada en el historial!", get_back_keyboard())
                     if tid_cliente:
                         try:
-                            enviar_mensaje_callback(int(tid_cliente), "🎉 *¡Tu pago ha sido verificado y aprobado!*\n\nTu servicio ya se encuentra *Activo* por 30 días más. ¡Disfruta tu contenido!", get_main_menu_keyboard())
+                            enviar_mensaje_callback(int(tid_cliente), "🎉 *¡Tu pago en efectivo ha sido verificado y aprobado!*\n\nTu servicio ya se encuentra *Activo* por 30 días más. ¡Disfruta tu contenido!", get_main_menu_keyboard())
                         except Exception:
                             pass
                 else:
@@ -263,7 +268,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     elif accion.startswith("rechazar_"):
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             row_idx = int(accion.split("_")[1])
-            # Quitar botones del mensaje inmediatamente para evitar doble clic
             if message_id:
                 quitar_botones_telegram(chat_id, message_id)
             enviar_mensaje_callback(chat_id, f"❌ Pago de la fila {row_idx} marcado como rechazado/revisar.", get_back_keyboard())
@@ -462,7 +466,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         enviar_mensaje_callback(chat_id, mensaje, teclado)
 
 
-def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_target, detalle_operacion, enviar_cb, editar_cb=None, message_id=None, es_cb=False):
+def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_target, enviar_cb):
     """Actualiza la fila en Google Sheets como Pendiente y notifica al Admin el pago en efectivo."""
     try:
         sheet = conectar_sheets()
@@ -471,35 +475,28 @@ def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_targ
         servicio_elegido = fila_obj.get("Servicio", "Disney+")
         perfil_asignado = fila_obj.get("Pantalla", "Perfil 1")
         cuenta_asignada = fila_obj.get("Cuenta", "Por Asignar")
-        precio_usd = PRECIO_NETFLIX_USD if "netflix" in str(servicio_elegido).lower() else PRECIO_DISNEY_USD
 
         sheet.update_cell(row_idx_target, 6, "Pendiente Pago")
 
         mensaje_cliente = (
             "💵 *PAGO EN EFECTIVO REGISTRADO*\n\n"
-            f"• *Operación:* {detalle_operacion}\n"
-            f"• *Servicio:* {servicio_elegido} ({perfil_asignado})\n"
-            f"• *Monto a cancelar:* `${precio_usd:.2f} USD`\n\n"
-            "👤 Entrega el efectivo al encargado del local para que proceda a verificar y activar tu cuenta."
+            f"Has indicado que realizarás el pago en efectivo para *{servicio_elegido}* ({perfil_asignado}).\n\n"
+            "👤 Entrega el dinero al encargado del local para que proceda a verificar y activar tu cuenta."
         )
-        if es_cb and editar_cb:
-            editar_cb(chat_id, message_id, mensaje_cliente, get_back_keyboard())
-        else:
-            enviar_cb(chat_id, mensaje_cliente, get_back_keyboard())
+        enviar_cb(chat_id, mensaje_cliente, get_back_keyboard())
 
         if ADMIN_ID:
             texto_admin = (
                 "🔔 *¡NUEVO PAGO EN EFECTIVO REPORTADO!* 🔔\n\n"
                 f"• *Cliente:* {nombre} (@{username})\n"
                 f"• *Telegram ID:* `{str_chat_id}`\n"
-                f"• *Tipo:* {detalle_operacion}\n"
                 f"• *Servicio:* {servicio_elegido} ({perfil_asignado})\n"
                 f"• *Cuenta:* {cuenta_asignada}\n"
-                f"• *Monto esperado:* `${precio_usd:.2f} USD`"
+                f"• *Método:* Efectivo (Local)"
             )
             teclado_admin = {
                 "inline_keyboard": [
-                    [{"text": "✅ Aprobar Efectivo (+30 días)", "callback_data": f"aprobar_{row_idx_target}_efectivo"}],
+                    [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_target}"}],
                     [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_target}"}]
                 ]
             }
@@ -609,7 +606,7 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
     if codigo:
         mensaje = f"🔑 *Tu código de acceso de {nombre_plataforma} es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu pantalla)_"
     else:
-        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado en tu TV hace unos segundos e intenta de nuevo."
+        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado in tu TV hace unos segundos e intenta de nuevo."
 
     teclado = get_back_keyboard()
     if es_cb and editar_cb:
@@ -650,7 +647,7 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
         
         teclado_admin = {
             "inline_keyboard": [
-                [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}_digital"}],
+                [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}"}],
                 [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_pendiente}"}]
             ]
         }
@@ -848,7 +845,7 @@ def get_datos_keyboard(mostrar_renovar=False):
     botones = []
     if mostrar_renovar: botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}])
     botones.append([{"text": "➕ Comprar Pantalla Adicional", "callback_data": "comprar_extra"}])
-    botones.append([{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}])
+    botones.append([{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]]
     return {"inline_keyboard": botones}
 
 def get_back_keyboard():
