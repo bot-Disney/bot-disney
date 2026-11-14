@@ -23,7 +23,7 @@ control_intentos_otp = {}
 MAX_INTENTOS_RAPIDOS = 2
 COOLDOWN_SEGUNDOS = 180
 
-# Control de usuarios que están esperando enviar captura de pago (Mapea chat_id -> row_idx exacto)
+# Control de usuarios que están esperando enviar captura de pago
 esperando_captura_pago = {}
 
 
@@ -74,7 +74,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas, perfiles sucesivos por límite, stock y lista de espera."""
+    """Cerebro industrial multi-plataforma con reciclaje inteligente de perfiles y gestión de cuentas."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -184,7 +184,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # PANEL DE ADMINISTRADOR Y APROBACIÓN
+    # PANEL DE ADMINISTRADOR Y GESTIÓN DE VENCIDOS
     # -------------------------------------------------------------
     if accion == "/admin" or accion == "admin_volver":
         if ADMIN_ID and str_chat_id == ADMIN_ID:
@@ -192,6 +192,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             teclado = {
                 "inline_keyboard": [
                     [{"text": "📋 Ver Pagos Pendientes", "callback_data": "admin_ver_pendientes"}],
+                    [{"text": "🗑️ Gestionar / Eliminar Vencidos", "callback_data": "admin_ver_vencidos"}],
                     [{"text": "📦 Asignar Stock Pendiente (Lista de Espera)", "callback_data": "admin_asignar_stock"}],
                     [{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]
                 ]
@@ -235,6 +236,49 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                         ]
                     }
                     enviar_mensaje_callback(chat_id, txt, teclado_aprobar)
+        return
+
+    elif accion == "admin_ver_vencidos":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            vencidos = obtener_suscripciones_vencidas()
+            if not vencidos:
+                enviar_mensaje_callback(chat_id, "✅ No hay pantallas vencidas para depurar.", {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
+            else:
+                for idx, row_idx, v in vencidos:
+                    srv_v = safe_get(v, "Servicio", "Disney+")
+                    pnt_v = safe_get(v, "Pantalla", "Perfil 1")
+                    cta_v = safe_get(v, "Cuenta", "Cuenta")
+                    fec_v = safe_get(v, "Vencimiento", "N/A")
+                    txt = (
+                        f"🔴 *Pantalla Vencida #{idx}* (Fila {row_idx})\n"
+                        f"• *Cliente:* {safe_get(v, 'Nombre')}\n"
+                        f"• *Servicio:* {srv_v} ({pnt_v})\n"
+                        f"• *Correo:* `{cta_v}`\n"
+                        f"• *Venció el:* `{fec_v}`"
+                    )
+                    teclado_borrar = {
+                        "inline_keyboard": [
+                            [{"text": "🗑️ Liberar Perfil y Borrar Fila", "callback_data": f"admin_liberar_{row_idx}"}],
+                            [{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]
+                        ]
+                    }
+                    enviar_mensaje_callback(chat_id, txt, teclado_borrar)
+        return
+
+    elif accion.startswith("admin_liberar_"):
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            try:
+                row_idx_a_borrar = int(accion.split("_")[-1])
+                resultado_liberacion = liberar_y_eliminar_fila_suscripcion(row_idx_a_borrar)
+                if message_id:
+                    quitar_botones_telegram(chat_id, message_id)
+                enviar_mensaje_callback(chat_id, resultado_liberacion, {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
+            except Exception as e:
+                enviar_mensaje_callback(chat_id, f"❌ Error al liberar la fila: {e}", get_back_keyboard())
         return
 
     elif accion.startswith("aprobar_"):
@@ -715,32 +759,35 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
 # ==========================================
 # FUNCIONES AUXILIARES DE GOOGLE SHEETS
 # ==========================================
-def obtener_siguiente_perfil_sucesivo(sheet, servicio_solicitado, correo_asignado):
-    """Calcula el perfil sucesivo respetando el límite máximo (Netflix: 5, Disney+: 7) por cada cuenta específica."""
+def obtener_primer_perfil_disponible(sheet, servicio_solicitado, correo_asignado):
+    """Busca el primer número de perfil vacante (del 1 al 5 o 7) en esa cuenta específica para reciclarlo."""
     try:
         es_netflix = "netflix" in servicio_solicitado.lower()
         limite_maximo = 5 if es_netflix else 7
 
         registros = sheet.get_all_records()
-        perfiles_en_esta_cuenta = 0
+        perfiles_ocupados_en_cuenta = set()
 
         for r in registros:
             srv = safe_get(r, "Servicio", "").lower()
             cta = safe_get(r, "Cuenta", "").lower()
+            pnt = safe_get(r, "Pantalla", "").lower() # Ej: "Perfil 1"
             
-            # Si coincide tanto el servicio como el correo exacto de la cuenta asignada
             if servicio_solicitado.lower() in srv and cta == correo_asignado.lower():
-                perfiles_en_esta_cuenta += 1
+                # Extraemos el número del texto "Perfil X"
+                for num in range(1, limite_maximo + 1):
+                    if f"perfil {num}" in pnt:
+                        perfiles_ocupados_en_cuenta.add(num)
 
-        # El siguiente perfil será la cantidad actual + 1 (ej: si van 3, toca el Perfil 4)
-        siguiente_numero = perfiles_en_esta_cuenta + 1
-        
-        if siguiente_numero > limite_maximo:
-            return "Perfil 1"  # Si ya superó el límite, arranca en Perfil 1 para la nueva cuenta
-            
-        return f"Perfil {siguiente_numero}"
+        # Buscamos cuál es el primer número que NO está ocupado
+        for num in range(1, limite_maximo + 1):
+            if num not in perfiles_ocupados_en_cuenta:
+                return f"Perfil {num}"
+
+        # Si por alguna razón están todos ocupados, retorna el siguiente secuencial
+        return f"Perfil {limite_maximo + 1}"
     except Exception as e:
-        print(f"Error calculando perfil sucesivo: {e}")
+        print(f"Error buscando perfil disponible: {e}")
         return "Perfil 1"
 
 
@@ -761,7 +808,6 @@ def asignar_correo_desde_stock(sheet_principal, servicio_solicitado, chat_id="",
             
             if servicio_solicitado.lower() in srv_cuenta and estado_cuenta == "activa":
                 try:
-                    # Límite por defecto según plataforma si no está especificado en la hoja
                     limite_defecto = 5 if "netflix" in servicio_solicitado.lower() else 7
                     capacidad = int(safe_get(cuenta_row, "Capacidad Total", str(limite_defecto)))
                     ocupados = int(safe_get(cuenta_row, "Perfiles Ocupados", "0"))
@@ -790,7 +836,6 @@ def asignar_correo_desde_stock(sheet_principal, servicio_solicitado, chat_id="",
                         
                     return correo_encontrado
                     
-        # Si llega aquí es porque no hay stock activo disponible -> Lista de Espera
         if ADMIN_ID and enviar_mensaje_callback:
             alerta_sin_stock = (
                 f"🚨 *¡COMPRA CON STOCK AGOTADO (LISTA DE ESPERA)!* 🚨\n\n"
@@ -857,8 +902,7 @@ def procesar_asignacion_stock_masivo(enviar_msg_cb):
                             break
                 
                 if cuenta_encontrada and idx_cuenta_encontrada:
-                    # Recalculamos el perfil correcto respetando el límite para esta cuenta específica
-                    perfil_correcto = obtener_siguiente_perfil_sucesivo(sheet_principal, servicio_cli, cuenta_encontrada)
+                    perfil_correcto = obtener_primer_perfil_disponible(sheet_principal, servicio_cli, cuenta_encontrada)
                     
                     sheet_principal.update_cell(idx_cli, 3, cuenta_encontrada)
                     sheet_principal.update_cell(idx_cli, 4, perfil_correcto)
@@ -926,11 +970,11 @@ def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disne
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
         
-        # 1. Primero obtenemos el correo desde el stock disponible
+        # 1. Obtenemos el correo disponible
         correo_asignado = asignar_correo_desde_stock(sheet, servicio, str_chat_id, nombre_completo, enviar_mensaje_cb)
         
-        # 2. Luego calculamos el perfil sucesivo basándonos estrictamente en los cupos de ese correo
-        perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio, correo_asignado)
+        # 2. Obtenemos el primer perfil vacante (reciclado) en esa cuenta
+        perfil_asignado = obtener_primer_perfil_disponible(sheet, servicio, correo_asignado)
         
         sheet.append_row([str(str_chat_id), nombre_completo, correo_asignado, perfil_asignado, "", "Pendiente Pago", servicio])
         return len(sheet.get_all_records()) + 1
@@ -961,6 +1005,88 @@ def obtener_clientes_pendientes():
     except Exception as e:
         print(f"Error obteniendo pendientes: {e}")
         return []
+
+
+def obtener_suscripciones_vencidas():
+    """Busca en la hoja principal qué suscripciones están vencidas o inactivas para depurarlas."""
+    try:
+        sheet = conectar_sheets()
+        registros = sheet.get_all_records()
+        vencidos = []
+        hoy = datetime.date.today()
+
+        for idx, row in enumerate(registros, start=2):
+            vencimiento_str = safe_get(row, "Vencimiento", "")
+            estado = safe_get(row, "Estado", "").lower()
+            cuenta = safe_get(row, "Cuenta", "")
+
+            # Si tiene correo asignado y fecha de vencimiento
+            if cuenta and cuenta.lower() not in ("por asignar", "pendiente de stock"):
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                    try:
+                        fecha_venc = datetime.datetime.strptime(vencimiento_str, fmt).date()
+                        if fecha_venc < hoy or estado == "vencido":
+                            vencidos.append((len(vencidos)+1, idx, row))
+                        break
+                    except ValueError:
+                        continue
+        return vencidos
+    except Exception as e:
+        print(f"Error obteniendo vencidos: {e}")
+        return []
+
+
+def liberar_y_eliminar_fila_suscripcion(row_idx):
+    """Elimina la fila del cliente, resta -1 en la hoja Cuentas y cambia el estado a Activa si estaba Llena."""
+    try:
+        sheet_principal = conectar_sheets()
+        spreadsheet = sheet_principal.spreadsheet
+        
+        try:
+            sheet_cuentas = spreadsheet.worksheet("Cuentas")
+        except Exception:
+            return "❌ No se encontró la pestaña 'Cuentas'."
+
+        # 1. Leemos los datos de la fila antes de borrarla para saber qué cuenta y servicio liberar
+        fila_datos = sheet_principal.row_values(row_idx)
+        if len(fila_datos) < 3:
+            return "❌ La fila seleccionada no es válida o está vacía."
+
+        correo_a_liberar = safe_get({"Cuenta": fila_datos[2]}, "Cuenta", "")
+        servicio_fila = safe_get({"Servicio": fila_datos[6] if len(fila_datos) > 6 else ""}, "Servicio", "Disney+")
+
+        # 2. Buscamos esa cuenta en la pestaña Cuentas para actualizar su contador (-1)
+        registros_cuentas = sheet_cuentas.get_all_records()
+        cuenta_encontrada = False
+
+        for idx_c, c_row in enumerate(registros_cuentas, start=2):
+            correo_cta = safe_get(c_row, "Correo (Usuario)", safe_get(c_row, "Correo", ""))
+            if correo_cta.lower() == correo_a_liberar.lower():
+                try:
+                    ocupados = int(safe_get(c_row, "Perfiles Ocupados", "1"))
+                except ValueError:
+                    ocupados = 1
+
+                nuevos_ocupados = max(0, ocupados - 1)
+                sheet_cuentas.update_cell(idx_c, 5, nuevos_ocupados) # Columna E (Perfiles Ocupados)
+
+                # Si estaba Llena y ahora tiene espacio, la devolvemos a estado Activa
+                estado_actual = safe_get(c_row, "Estado", "").lower()
+                if estado_actual == "llena":
+                    sheet_cuentas.update_cell(idx_c, 6, "Activa") # Columna F (Estado)
+
+                cuenta_encontrada = True
+                break
+
+        # 3. Borramos la fila del cliente de la hoja principal
+        sheet_principal.delete_rows(row_idx)
+
+        msg_extra = " y se liberó un cupo en la cuenta maestra" if cuenta_encontrada else ""
+        return f"✅ ¡Suscripción de la fila {row_idx} eliminada con éxito{msg_extra}!"
+
+    except Exception as e:
+        print(f"Error liberando suscripción: {e}")
+        return f"❌ Ocurrió un error al liberar la suscripción: {e}"
 
 
 def aprobar_suscripcion_sheet(row_idx):
@@ -1055,6 +1181,7 @@ def generar_reporte_admin():
         activos = sum(1 for r in registros if safe_get(r, "Estado", "").lower() == "activo")
         pendientes = sum(1 for r in registros if "pendiente" in safe_get(r, "Estado", "").lower())
         en_espera_stock = sum(1 for r in registros if "pendiente de stock" in safe_get(r, "Cuenta", "").lower())
+        vencidos_total = len(obtener_suscripciones_vencidas())
         unicos = len(set(safe_get(r, "Telegram_ID", "") for r in registros if safe_get(r, "Telegram_ID", "")))
         return (
             "📊 *PANEL DE CONTROL INDUSTRIAL*\n\n"
@@ -1062,6 +1189,7 @@ def generar_reporte_admin():
             f"📺 *Total pantallas:* {len(registros)}\n"
             f"🟢 *Activas:* {activos}\n"
             f"🟡 *Pagos pendientes:* {pendientes}\n"
+            f"🔴 *Vencidas por depurar:* {vencidos_total}\n"
             f"⏳ *En espera de stock:* {en_espera_stock}"
         )
     except Exception as e:
