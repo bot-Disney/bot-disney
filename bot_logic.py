@@ -12,7 +12,7 @@ ADMIN_ID = str(os.getenv("ADMIN_TELEGRAM_ID", "")).strip()
 # CONFIGURACIÓN DE PRECIOS (USD/USDT) Y DATOS DE PAGO MÓVIL
 # =============================================================
 PRECIO_DISNEY_USD = 5.0   # Precio en USD de Disney+
-PRECIO_NETFLIX_USD = 4.5  # Precio in USD de Netflix
+PRECIO_NETFLIX_USD = 4.5  # Precio en USD de Netflix
 TASA_RESPALDO_BS = 65.0   # Tasa de respaldo por si fallan las consultas externas
 
 PAGO_MOVIL_BANCO = "🏦 Provincial (0108)"
@@ -75,7 +75,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial con soporte para personalización de nombres de perfiles."""
+    """Cerebro industrial con diseño visual limpio y compacto."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -101,19 +101,16 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             cuenta_perfil = safe_get(fila_obj, "Cuenta", "Correo")
             perfil_actual_texto = safe_get(fila_obj, "Pantalla", "Perfil 1")
             
-            # Extraemos el número base del perfil (Ej: "Perfil 3" de "Perfil 3 (Juan)") para mantener la lógica interna
             numero_base = "Perfil 1"
             for n in range(1, 8):
                 if f"perfil {n}" in perfil_actual_texto.lower():
                     numero_base = f"Perfil {n}"
                     break
 
-            # Guardamos en la columna de Pantalla el formato limpio: "Perfil 3 (NombrePersonalizado)"
             nuevo_valor_celda = f"{numero_base} ({nuevo_nombre})"
-            sheet.update_cell(row_idx_perfil, 4, nuevo_valor_celda) # Columna D es Pantalla
+            sheet.update_cell(row_idx_perfil, 4, nuevo_valor_celda)
 
-            # Notificamos al Administrador
-            if ADMIN_ID and enviar_foto_callback or ADMIN_ID:
+            if ADMIN_ID:
                 texto_admin = (
                     "✏️ *¡SOLICITUD DE CAMBIO DE NOMBRE DE PERFIL!* ✏️\n\n"
                     f"• *Cliente:* {nombre} (@{username})\n"
@@ -415,7 +412,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                         except Exception:
                             pass
                 else:
-                    enviar_mensaje_callback(chat_id, "❌ Error al actualizar la hoja de cálculo.", get_back_keyboard())
+                    enviar_mensaje_callback(chat_id, f"❌ Error al actualizar la hoja de cálculo.", get_back_keyboard())
             except Exception as e:
                 enviar_mensaje_callback(chat_id, f"❌ Error: {e}", get_back_keyboard())
         return
@@ -502,18 +499,46 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         else:
             enviar_mensaje_callback(chat_id, mensaje, teclado)
 
+    elif accion == "menu_renombrar":
+        suscripciones_activas = [
+            s for s in obtener_suscripciones_por_id(chat_id)
+            if safe_get(s, "Estado", "").lower() == "activo"
+            and "pendiente" not in safe_get(s, "Cuenta", "").lower()
+        ]
+
+        if not suscripciones_activas:
+            enviar_mensaje_callback(chat_id, "⚠️ No tienes pantallas activas disponibles para renombrar.", get_back_keyboard())
+            return
+
+        botones_selector = []
+        for sub in suscripciones_activas:
+            r_idx = sub.get("_row_index")
+            srv = safe_get(sub, "Servicio", "Disney+")
+            pnt = safe_get(sub, "Pantalla", "Perfil 1")
+            cta = safe_get(sub, "Cuenta", "Cuenta")
+            botones_selector.append([{"text": f"✏️ {srv} - {pnt} ({cta})", "callback_data": f"renombrar_perfil_{r_idx}"}])
+
+        botones_selector.append([{"text": "🔙 Volver", "callback_data": "ver_datos"}])
+        mensaje = "✏️ *PERSONALIZAR NOMBRE DE PERFIL*\n\nSelecciona la pantalla a la que deseas cambiarle el nombre:"
+        
+        if es_callback and editar_mensaje_callback:
+            editar_mensaje_callback(chat_id, message_id, mensaje, {"inline_keyboard": botones_selector})
+        else:
+            enviar_mensaje_callback(chat_id, mensaje, {"inline_keyboard": botones_selector})
+        return
+
     elif accion.startswith("renombrar_perfil_"):
         try:
             row_idx_renombrar = int(accion.split("_")[-1])
             esperando_nuevo_nombre_perfil[str_chat_id] = row_idx_renombrar
 
             mensaje_peticion = (
-                "✏️ *PERSONALIZAR NOMBRE DE PERFIL*\n\n"
+                "✏️ *ESCRIBE TU NUEVO NOMBRE*\n\n"
                 "Escribe a continuación el nombre que deseas asignarle a tu perfil (Ej: *Papá*, *Sofía*, *Cine*).\n\n"
                 "⚠️ *Nota:* Solo puedes cambiar el nombre de tu perfil una vez por ciclo de suscripción."
             )
             teclado_canc = {
-                "inline_keyboard": [[{"text": "🔙 Cancelar y Volver", "callback_data": "ver_datos"}]]
+                "inline_keyboard": [[{"text": "🔙 Cancelar y Volver", "callback_data": "menu_renombrar"}]]
             }
             if es_callback and editar_mensaje_callback:
                 editar_mensaje_callback(chat_id, message_id, mensaje_peticion, teclado_canc)
@@ -680,13 +705,12 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, mensaje, teclado_whatsapp)
 
     else:
-        mensaje = "¡Hola! Selecciona una opción del menú di abajo:"
+        mensaje = "¡Hola! Selecciona una opción del menú de abajo:"
         teclado = get_main_menu_keyboard()
         enviar_mensaje_callback(chat_id, mensaje, teclado)
 
 
 def limpiar_fila_cancelada(row_idx):
-    """Borra la fila si el usuario canceló o el administrador rechazó el pago, liberando el cupo en la cuenta maestra."""
     try:
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
@@ -893,7 +917,7 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
     if codigo:
         mensaje = f"🔑 *Tu código de acceso de {nombre_plataforma} es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu pantalla)_"
     else:
-        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado in tu TV hace unos segundos e intenta de nuevo."
+        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado en tu TV hace unos segundos e intenta de nuevo."
 
     teclado = get_back_keyboard()
     if es_cb and editar_cb:
@@ -940,7 +964,6 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
 # FUNCIONES AUXILIARES DE GOOGLE SHEETS
 # ==========================================
 def obtener_primer_perfil_disponible(sheet, servicio_solicitado, correo_asignado):
-    """Busca el primer número de perfil vacante (del 1 al 5 o 7) en esa cuenta específica para reciclarlo."""
     try:
         es_netflix = "netflix" in servicio_solicitado.lower()
         limite_maximo = 5 if es_netflix else 7
@@ -969,7 +992,6 @@ def obtener_primer_perfil_disponible(sheet, servicio_solicitado, correo_asignado
 
 
 def asignar_correo_desde_stock(sheet_principal, servicio_solicitado, chat_id="", nombre_cliente="", enviar_mensaje_callback=None):
-    """Busca en 'Cuentas' un correo disponible que no haya superado su capacidad y actualiza su stock."""
     try:
         spreadsheet = sheet_principal.spreadsheet
         try:
@@ -1033,7 +1055,6 @@ def asignar_correo_desde_stock(sheet_principal, servicio_solicitado, chat_id="",
 
 
 def procesar_asignacion_stock_masivo(enviar_msg_cb):
-    """Revisa los clientes en lista de espera y les asigna cuentas nuevas si hay stock disponible."""
     try:
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
@@ -1182,7 +1203,6 @@ def obtener_clientes_pendientes():
 
 
 def obtener_suscripciones_vencidas():
-    """Busca en la hoja principal qué suscripciones están vencidas o inactivas para depurarlas."""
     try:
         sheet = conectar_sheets()
         registros = sheet.get_all_records()
@@ -1210,7 +1230,6 @@ def obtener_suscripciones_vencidas():
 
 
 def liberar_y_eliminar_fila_suscripcion(row_idx):
-    """Elimina la fila del cliente, resta -1 en la hoja Cuentas y cambia el estado a Activa si estaba Llena."""
     try:
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
@@ -1378,16 +1397,11 @@ def get_main_menu_keyboard():
 def get_datos_keyboard(mostrar_renovar=False, suscripciones=None):
     botones = []
     
-    # Si el cliente tiene suscripciones, agregamos la opción de personalizar nombre de perfil
+    # Un solo botón compacto para cambiar nombres si tiene suscripciones activas
     if suscripciones:
-        for sub in suscripciones:
-            r_idx = sub.get("_row_index")
-            srv = safe_get(sub, "Servicio", "Disney+")
-            pnt = safe_get(sub, "Pantalla", "Perfil 1")
-            estado_sub = safe_get(sub, "Estado", "").lower()
-            
-            if estado_sub == "activo" and r_idx:
-                botones.append([{"text": f"✏️ Cambiar Nombre a {srv} ({pnt})", "callback_data": f"renombrar_perfil_{r_idx}"}])
+        tiene_activas = any(safe_get(s, "Estado", "").lower() == "activo" and "pendiente" not in safe_get(s, "Cuenta", "").lower() for s in suscripciones)
+        if tiene_activas:
+            botones.append([{"text": "✏️ Personalizar Nombres de Perfil", "callback_data": "menu_renombrar"}])
 
     if mostrar_renovar: 
         botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}])
