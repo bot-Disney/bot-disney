@@ -77,7 +77,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial con reporte de resumen general de negocio para el administrador."""
+    """Cerebro industrial con alerta de comportamiento anormal de códigos OTP para el administrador."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -777,6 +777,9 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             limpiar_fila_cancelada(row_huerta)
 
         if not verificar_cliente_activo(chat_id):
+            # Registrar intento sospechoso o no autorizado de pedir código sin estar activo
+            registrar_intento_sospechoso_otp(chat_id, nombre, username, enviar_mensaje_callback)
+
             mensaje = "🔒 *ACCESO RESTRINGIDO*\n\nPara solicitar códigos, debes tener al menos una pantalla en estado *Activo* y con correo asignado."
             teclado = get_datos_keyboard(mostrar_renovar=True)
             if es_callback and editar_mensaje_callback:
@@ -801,7 +804,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 botones_selector.append([{"text": f"📺 {srv} - {pnt} ({cta})", "callback_data": f"pedir_otp_{idx}"}])
             botones_selector.append([{"text": "🔙 Volver", "callback_data": "menu_principal"}])
             
-            mensaje = "📺 Tienes varias pantallas activas. *¿Для cuál pantalla deseas solicitar el código?*:"
+            mensaje = "📺 Tienes varias pantallas activas. *¿Para cuál pantalla deseas solicitar el código?*:"
             if es_callback and editar_mensaje_callback:
                 editar_mensaje_callback(chat_id, message_id, mensaje, {"inline_keyboard": botones_selector})
             else:
@@ -930,6 +933,44 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         mensaje = "¡Hola! Selecciona una opción del menú de abajo:"
         teclado = get_main_menu_keyboard()
         enviar_mensaje_callback(chat_id, mensaje, teclado)
+
+
+def registrar_intento_sospechoso_otp(chat_id, nombre, username, enviar_mensaje_cb):
+    """Monitorea y alerta al administrador si un usuario intenta solicitar códigos de forma anormal sin estar activo."""
+    str_chat_id = str(chat_id).strip()
+    ahora = time.time()
+    
+    if "intentos_anormales" not in control_intentos_otp:
+        control_intentos_otp["intentos_anormales"] = {}
+        
+    if str_chat_id not in control_intentos_otp["intentos_anormales"]:
+        control_intentos_otp["intentos_anormales"][str_chat_id] = {"contador": 0, "primer_intento": ahora}
+        
+    registro = control_intentos_otp["intentos_anormales"][str_chat_id]
+    
+    # Reiniciar contador si pasa más de 1 hora
+    if ahora - registro["primer_intento"] > 3600:
+        registro["contador"] = 0
+        registro["primer_intento"] = ahora
+        
+    registro["contador"] += 1
+    
+    # Si acumula 3 o más intentos sospechosos, alertamos al administrador
+    if registro["contador"] >= 3 and ADMIN_ID and enviar_mensaje_cb:
+        nombre_completo = f"{nombre} (@{username})" if username else nombre
+        alerta_anomalia = (
+            "🚨 *¡ALERTA DE COMPORTAMIENTO SOSPECHOSO!* 🚨\n\n"
+            f"• *Usuario:* {nombre_completo}\n"
+            f"• *Telegram ID:* `{str_chat_id}`\n"
+            f"• *Incidente:* Ha intentado solicitar códigos de acceso múltiples veces sin tener una suscripción activa o con cuenta vencida.\n\n"
+            "💡 Es posible que este usuario esté intentando acceder sin pagar o buscando filtrar accesos. Puedes buscar su ID en `/admin` para verificarlo."
+        )
+        try:
+            enviar_mensaje_cb(int(ADMIN_ID), alerta_anomalia)
+            # Reseteamos temporalmente para no saturar con spam al admin
+            registro["contador"] = 0
+        except Exception as e:
+            print(f"Error enviando alerta de anomalía al admin: {e}")
 
 
 def limpiar_fila_cancelada(row_idx):
@@ -1139,7 +1180,7 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
     if codigo:
         mensaje = f"🔑 *Tu código de acceso de {nombre_plataforma} es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu pantalla)_"
     else:
-        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado en tu TV hace unos segundos e intenta de nuevo."
+        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado in tu TV hace unos segundos e intenta de nuevo."
 
     teclado = get_back_keyboard()
     if es_cb and editar_cb:
@@ -1612,7 +1653,7 @@ def generar_reporte_admin():
             "📊 *PANEL DE CONTROL INDUSTRIAL*\n\n"
             f"👥 *Clientes únicos:* {unicos}\n"
             f"📺 *Total pantallas:* {len(registros)}\n"
-            f"🟢 *Activas:* {activos}\n"
+            f"🟢 *Activas:* {activas}\n"
             f"🟡 *Pagos pendientes:* {pendientes}\n"
             f"🔴 *Vencidas por depurar:* {vencidos_total}\n"
             f"⏳ *En espera de stock:* {en_espera_stock}"
@@ -1627,7 +1668,6 @@ def generar_resumen_completo_negocio():
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
         
-        # 1. Analizamos la hoja principal de Clientes / Pantallas
         registros_clientes = sheet_principal.get_all_records()
         total_pantallas = len(registros_clientes)
         activas_cli = sum(1 for r in registros_clientes if safe_get(r, "Estado", "").lower() == "activo")
@@ -1635,11 +1675,9 @@ def generar_resumen_completo_negocio():
         en_espera_stock = sum(1 for r in registros_clientes if "pendiente de stock" in safe_get(r, "Cuenta", "").lower())
         clientes_unicos = len(set(safe_get(r, "Telegram_ID", "") for r in registros_clientes if safe_get(r, "Telegram_ID", "")))
 
-        # Desglose por servicio en clientes
         netflix_cli = sum(1 for r in registros_clientes if "netflix" in safe_get(r, "Servicio", "").lower())
         disney_cli = sum(1 for r in registros_clientes if "disney" in safe_get(r, "Servicio", "").lower())
 
-        # 2. Analizamos la hoja de Cuentas Maestras (Stock)
         total_cuentas_maestras = 0
         cuentas_activas_stock = 0
         cuentas_llenas_stock = 0
@@ -1669,7 +1707,6 @@ def generar_resumen_completo_negocio():
         except Exception:
             pass
 
-        # 3. Analizamos la hoja de Ventas (Ingresos)
         total_ingresos_usd = 0.0
         ventas_totales_count = 0
         try:
@@ -1729,7 +1766,7 @@ def get_datos_keyboard(mostrar_renovar=False, suscripciones=None):
     if mostrar_renovar: 
         botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}])
         
-    botones.append([{"text": "➕ Comprar Pantalla Adicional", "callback_data": "comprar_extra"}],)
+    botones.append([{"text": "➕ Comprar Pantalla Adicional", "callback_data": "comprar_extra"}])
     botones.append([{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}])
     return {"inline_keyboard": botones}
 
