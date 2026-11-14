@@ -27,8 +27,7 @@ COOLDOWN_SEGUNDOS = 180
 esperando_captura_pago = {}
 esperando_nuevo_nombre_perfil = {}
 esperando_busqueda_admin = {}
-esperando_nueva_cuenta_servicio = {}  # Guarda chat_id -> "Netflix" o "Disney+"
-esperando_nueva_cuenta_correo = {}    # Guarda chat_id -> servicio cuando espera el correo/contraseña
+esperando_nueva_cuenta_correo = {}
 
 
 def safe_get(row_dict, key, default=""):
@@ -78,7 +77,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial con capacidad de carga de cuentas maestras desde Telegram."""
+    """Cerebro industrial con reporte de resumen general de negocio para el administrador."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -97,18 +96,15 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             try:
                 sheet_cuentas = spreadsheet.worksheet("Cuentas")
             except Exception:
-                # Si no existe la pestaña Cuentas, la creamos con sus encabezados industriales
                 sheet_cuentas = spreadsheet.add_worksheet(title="Cuentas", rows="1000", cols="6")
                 sheet_cuentas.append_row(["Servicio", "Correo", "Contraseña", "Capacidad Total", "Perfiles Ocupados", "Estado"])
 
             capacidad_defecto = 5 if "netflix" in servicio_cuenta.lower() else 7
             
-            # Agregamos la fila a la pestaña Cuentas: [Servicio, Correo/Contraseña, Capacidad, 0, Activa]
-            # (Asumimos que el usuario escribe algo como "correo@gmail.com : contraseña" o todo junto)
             sheet_cuentas.append_row([
                 servicio_cuenta,
                 datos_cuenta,
-                "",  # Espacio para contraseña si va separada o integrada
+                "",
                 str(capacidad_defecto),
                 "0",
                 "Activa"
@@ -379,7 +375,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # PANEL DE ADMINISTRADOR Y CARGA DE CUENTAS MAESTRAS
+    # PANEL DE ADMINISTRADOR Y RESUMEN GENERAL DEL NEGOCIO
     # -------------------------------------------------------------
     if accion == "/admin" or accion == "admin_volver":
         if str_chat_id in esperando_captura_pago:
@@ -394,6 +390,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             reporte = generar_reporte_admin()
             teclado = {
                 "inline_keyboard": [
+                    [{"text": "📊 Resumen General del Negocio", "callback_data": "admin_resumen_negocio"}],
                     [{"text": "📋 Ver Pagos Pendientes", "callback_data": "admin_ver_pendientes"}],
                     [{"text": "➕ Cargar Cuenta Maestro (Stock)", "callback_data": "admin_cargar_cuenta"}],
                     [{"text": "🔍 Buscar y Gestionar Cliente Activo", "callback_data": "admin_pedir_busqueda"}],
@@ -408,6 +405,18 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 enviar_mensaje_callback(chat_id, reporte, teclado)
         else:
             enviar_mensaje_callback(chat_id, "⛔ No tienes permisos para acceder a este panel.", get_main_menu_keyboard())
+        return
+
+    elif accion == "admin_resumen_negocio":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            resumen_detallado = generar_resumen_completo_negocio()
+            teclado_resumen = {
+                "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+            }
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, resumen_detallado, teclado_resumen)
+            else:
+                enviar_mensaje_callback(chat_id, resumen_detallado, teclado_resumen)
         return
 
     elif accion == "admin_cargar_cuenta":
@@ -792,7 +801,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 botones_selector.append([{"text": f"📺 {srv} - {pnt} ({cta})", "callback_data": f"pedir_otp_{idx}"}])
             botones_selector.append([{"text": "🔙 Volver", "callback_data": "menu_principal"}])
             
-            mensaje = "📺 Tienes varias pantallas activas. *¿Para cuál pantalla deseas solicitar el código?*:"
+            mensaje = "📺 Tienes varias pantallas activas. *¿Для cuál pantalla deseas solicitar el código?*:"
             if es_callback and editar_mensaje_callback:
                 editar_mensaje_callback(chat_id, message_id, mensaje, {"inline_keyboard": botones_selector})
             else:
@@ -1612,6 +1621,93 @@ def generar_reporte_admin():
         return f"❌ Error: {e}"
 
 
+def generar_resumen_completo_negocio():
+    """Calcula y extrae métricas detalladas de inventario, cuentas maestras, ventas y recaudación de Google Sheets."""
+    try:
+        sheet_principal = conectar_sheets()
+        spreadsheet = sheet_principal.spreadsheet
+        
+        # 1. Analizamos la hoja principal de Clientes / Pantallas
+        registros_clientes = sheet_principal.get_all_records()
+        total_pantallas = len(registros_clientes)
+        activas_cli = sum(1 for r in registros_clientes if safe_get(r, "Estado", "").lower() == "activo")
+        pendientes_pago = sum(1 for r in registros_clientes if "pendiente" in safe_get(r, "Estado", "").lower())
+        en_espera_stock = sum(1 for r in registros_clientes if "pendiente de stock" in safe_get(r, "Cuenta", "").lower())
+        clientes_unicos = len(set(safe_get(r, "Telegram_ID", "") for r in registros_clientes if safe_get(r, "Telegram_ID", "")))
+
+        # Desglose por servicio en clientes
+        netflix_cli = sum(1 for r in registros_clientes if "netflix" in safe_get(r, "Servicio", "").lower())
+        disney_cli = sum(1 for r in registros_clientes if "disney" in safe_get(r, "Servicio", "").lower())
+
+        # 2. Analizamos la hoja de Cuentas Maestras (Stock)
+        total_cuentas_maestras = 0
+        cuentas_activas_stock = 0
+        cuentas_llenas_stock = 0
+        capacidad_total_perfiles = 0
+        perfiles_totales_ocupados = 0
+
+        try:
+            sheet_cuentas = spreadsheet.worksheet("Cuentas")
+            registros_cuentas = sheet_cuentas.get_all_records()
+            total_cuentas_maestras = len(registros_cuentas)
+            for c in registros_cuentas:
+                est_c = safe_get(c, "Estado", "").lower()
+                if est_c == "activa":
+                    cuentas_activas_stock += 1
+                elif est_c == "llena":
+                    cuentas_llenas_stock += 1
+                
+                try:
+                    cap = int(safe_get(c, "Capacidad Total", "5"))
+                    ocu = int(safe_get(c, "Perfiles Ocupados", "0"))
+                except ValueError:
+                    cap = 5
+                    ocu = 0
+                
+                capacidad_total_perfiles += cap
+                perfiles_totales_ocupados += ocu
+        except Exception:
+            pass
+
+        # 3. Analizamos la hoja de Ventas (Ingresos)
+        total_ingresos_usd = 0.0
+        ventas_totales_count = 0
+        try:
+            sheet_ventas = spreadsheet.worksheet("Ventas")
+            registros_ventas = sheet_ventas.get_all_records()
+            ventas_totales_count = len(registros_ventas)
+            for v in registros_ventas:
+                monto_str = safe_get(v, "Monto USD", "0").replace("$", "").strip()
+                try:
+                    total_ingresos_usd += float(monto_str)
+                except ValueError:
+                    pass
+        except Exception:
+            pass
+
+        cupos_disponibles = max(0, capacidad_total_perfiles - perfiles_totales_ocupados)
+
+        resumen_texto = (
+            "📈 *RESUMEN GENERAL DEL NEGOCIO* 📈\n\n"
+            f"👤 *Clientes y Demografía:*\n"
+            f"• Clientes únicos: `{clientes_unicos}`\n"
+            f"• Pantallas alquiladas: `{total_pantallas}` (🟢 Activas: `{activas_cli}`)\n"
+            f"• Desglose: 📺 Netflix: `{netflix_cli}` | 📺 Disney+: `{disney_cli}`\n\n"
+            f"📦 *Estado del Inventario (Cuentas Maestras):*\n"
+            f"• Cuentas totales: `{total_cuentas_maestras}` (🟢 Activas: `{cuentas_activas_stock}` | 🔴 Llenas: `{cuentas_llenas_stock}`)\n"
+            f"• Capacidad de perfiles: `{perfiles_totales_ocupados} / {capacidad_total_perfiles}`\n"
+            f"• Cupos libres en stock: `{cupos_disponibles}`\n"
+            f"• Clientes en lista de espera (Sin stock): `{en_espera_stock}`\n\n"
+            f"💰 *Finanzas y Rendimiento:*\n"
+            f"• Transacciones registradas: `{ventas_totales_count}`\n"
+            f"• Ingresos acumulados: *`${total_ingresos_usd:.2f} USD`*\n"
+            f"• Pagos pendientes por verificar: `{pendientes_pago}`"
+        )
+        return resumen_texto
+    except Exception as e:
+        return f"❌ Error al generar el resumen del negocio: {e}"
+
+
 def get_main_menu_keyboard():
     return {
         "inline_keyboard": [
@@ -1631,9 +1727,9 @@ def get_datos_keyboard(mostrar_renovar=False, suscripciones=None):
             botones.append([{"text": "✏️ Personalizar Nombres de Perfil", "callback_data": "menu_renombrar"}])
 
     if mostrar_renovar: 
-        botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}],)
+        botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}])
         
-    botones.append([{"text": "➕ Comprar Pantalla Adicional", "callback_data": "comprar_extra"}])
+    botones.append([{"text": "➕ Comprar Pantalla Adicional", "callback_data": "comprar_extra"}],)
     botones.append([{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}])
     return {"inline_keyboard": botones}
 
