@@ -28,7 +28,7 @@ esperando_captura_pago = {}
 esperando_nuevo_nombre_perfil = {}
 esperando_busqueda_admin = {}
 asistente_cuenta_datos = {}
-esperando_nueva_fecha_admin = {}  # Guarda temporalmente la fila que se está editando en fecha
+esperando_nueva_fecha_admin = {}
 
 
 def safe_get(row_dict, key, default=""):
@@ -92,7 +92,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
         try:
             sheet = conectar_sheets()
-            sheet.update_cell(row_idx_editar, 5, nueva_fecha_txt)  # Columna 5 es Vencimiento
+            sheet.update_cell(row_idx_editar, 5, nueva_fecha_txt)
             enviar_mensaje_callback(
                 chat_id,
                 f"✅ *¡Fecha actualizada con éxito para la fila {row_idx_editar}!*\nNuevo vencimiento: `{nueva_fecha_txt}`",
@@ -250,7 +250,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 f"• *Correo:* `{cta_a}`\n"
                 f"• *Vence el:* `{fec_a}`"
             )
-            # Ficha limpia con solo 2 botones principales tal como lo pediste
+            # Ficha limpia con solo 2 botones principales
             teclado_ficha = {
                 "inline_keyboard": [
                     [
@@ -294,7 +294,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     [{"text": "📺 Cambiar de Perfil (Libre)", "callback_data": f"admin_cambiar_perfil_sel_{row_idx_edit}"}],
                     [{"text": "➕ Sumar 30 Días", "callback_data": f"admin_sumar30_{row_idx_edit}"}],
                     [{"text": "📅 Cambiar Fecha Manual", "callback_data": f"admin_editfecha_{row_idx_edit}"}],
-                    [{"text": "🔙 Volver a Ficha", "callback_data": "admin_pedir_busqueda"}]
+                    [{"text": "🔙 Volver a Búsqueda", "callback_data": "admin_pedir_busqueda"}]
                 ]
             }
             if es_callback and editar_mensaje_callback:
@@ -349,7 +349,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # APLICAR CAMBIO DE CUENTA (CON SINCRONIZACIÓN DE CUPOS EN SHEETS)
+    # APLICAR CAMBIO DE CUENTA (CON SINCRONIZACIÓN DE CUPOS)
     # -------------------------------------------------------------
     elif ADMIN_ID and str_chat_id == ADMIN_ID and accion.startswith("admin_aplicar_cambio_cuenta_"):
         try:
@@ -361,27 +361,22 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             spreadsheet = sheet_principal.spreadsheet
             sheet_cuentas = spreadsheet.worksheet("Cuentas")
 
-            # 1. Datos del cliente actual
             registros_clientes = sheet_principal.get_all_records()
             cli_obj = registros_clientes[row_idx_cli - 2]
             correo_viejo = safe_get(cli_obj, "Cuenta", "")
             srv_cliente = safe_get(cli_obj, "Servicio", "Disney+")
             tid_cliente = safe_get(cli_obj, "Telegram_ID", "")
 
-            # 2. Datos de la cuenta nueva seleccionada
             fila_cta_nueva = sheet_cuentas.row_values(idx_cta_nueva)
             correo_nuevo = fila_cta_nueva[1] if len(fila_cta_nueva) > 1 else ""
 
-            # 3. Buscar perfil libre exclusivo en la cuenta nueva (Evitando perfiles ocupados)
             perfil_libre = obtener_primer_perfil_disponible(sheet_principal, srv_cliente, correo_nuevo)
             pin_nuevo = obtener_pin_asignado_cliente(correo_nuevo, perfil_libre)
 
-            # 4. Actualizar contadores en la pestaña "Cuentas" (Liberar viejo, ocupar nuevo)
             registros_cuentas_dict = sheet_cuentas.get_all_records()
             for idx_c, c_row in enumerate(registros_cuentas_dict, start=2):
                 c_correo = safe_get(c_row, "Correo (Usuario)", safe_get(c_row, "Correo", ""))
                 
-                # Liberar cupo en la cuenta vieja
                 if c_correo.lower() == correo_viejo.lower():
                     ocupados_v = int(safe_get(c_row, "Perfiles Ocupados", "1"))
                     nuevos_ocupados_v = max(0, ocupados_v - 1)
@@ -389,7 +384,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     if safe_get(c_row, "Estado", "").lower() == "llena":
                         sheet_cuentas.update_cell(idx_c, 6, "Activa")
 
-                # Sumar cupo en la cuenta nueva
                 elif c_correo.lower() == correo_nuevo.lower():
                     ocupados_n = int(safe_get(c_row, "Perfiles Ocupados", "0"))
                     nuevos_ocupados_n = ocupados_n + 1
@@ -399,7 +393,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     if nuevos_ocupados_n >= limite_cap:
                         sheet_cuentas.update_cell(idx_c, 6, "Llena")
 
-            # 5. Actualizar la fila del cliente en la hoja principal
             sheet_principal.update_cell(row_idx_cli, 3, correo_nuevo)
             sheet_principal.update_cell(row_idx_cli, 4, perfil_libre)
 
@@ -416,7 +409,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 {"inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]}
             )
 
-            # Notificar al cliente del cambio
             if tid_cliente:
                 try:
                     msg_cli = (
@@ -435,7 +427,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # SELECCIÓN DE NUEVO PERFIL (FILTRANDO SOLO LOS LIBRES)
+    # SELECCIÓN DE NUEVO PERFIL (FILTRANDO OCUPADOS)
     # -------------------------------------------------------------
     elif ADMIN_ID and str_chat_id == ADMIN_ID and accion.startswith("admin_cambiar_perfil_sel_"):
         try:
@@ -451,7 +443,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             es_netflix = "netflix" in srv_cli.lower()
             limite_max = 5 if es_netflix else 7
 
-            # Identificar perfiles ya ocupados en esta cuenta específica
             perfiles_ocupados = set()
             for r in registros:
                 if safe_get(r, "Cuenta", "").lower() == correo_cli.lower():
@@ -485,7 +476,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # APLICAR CAMBIO DE PERFIL (CON ENTREGA AUTOMÁTICA DE PIN)
+    # APLICAR CAMBIO DE PERFIL (CON PIN AUTOMÁTICO)
     # -------------------------------------------------------------
     elif ADMIN_ID and str_chat_id == ADMIN_ID and accion.startswith("admin_aplicar_cambio_perfil_"):
         try:
@@ -502,10 +493,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             srv_cli = safe_get(cli_obj, "Servicio", "Disney+")
             tid_cli = safe_get(cli_obj, "Telegram_ID", "")
 
-            # Obtener el PIN exacto para este nuevo perfil
             pin_nuevo_perfil = obtener_pin_asignado_cliente(correo_cli, nuevo_nombre_perfil)
-
-            # Actualizar en Google Sheets
             sheet_principal.update_cell(row_idx_cli, 4, nuevo_nombre_perfil)
 
             if message_id:
@@ -1052,6 +1040,316 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         else:
             enviar_mensaje_callback(chat_id, mensaje, teclado_whatsapp)
 
+    # -------------------------------------------------------------
+    # PANEL DE ADMINISTRADOR PRINCIPAL (/admin)
+    # -------------------------------------------------------------
+    elif accion == "/admin" or accion == "admin_volver":
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+        if str_chat_id in esperando_busqueda_admin:
+            esperando_busqueda_admin.pop(str_chat_id)
+        if str_chat_id in asistente_cuenta_datos:
+            asistente_cuenta_datos.pop(str_chat_id)
+        if str_chat_id in esperando_nueva_fecha_admin:
+            esperando_nueva_fecha_admin.pop(str_chat_id)
+
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            reporte = generar_reporte_admin()
+            teclado = {
+                "inline_keyboard": [
+                    [{"text": "📊 Resumen General del Negocio", "callback_data": "admin_resumen_negocio"}],
+                    [{"text": "📋 Ver Pagos Pendientes", "callback_data": "admin_ver_pendientes"}],
+                    [{"text": "➕ Cargar Cuenta y PINs (Stock)", "callback_data": "admin_cargar_cuenta"}],
+                    [{"text": "🔍 Buscar y Gestionar Cliente Activo", "callback_data": "admin_pedir_busqueda"}],
+                    [{"text": "🗑️ Gestionar / Eliminar Vencidos", "callback_data": "admin_ver_vencidos"}],
+                    [{"text": "📦 Asignar Stock Pendiente", "callback_data": "admin_asignar_stock"}],
+                    [{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]
+                ]
+            }
+            if es_callback and editar_mensaje_callback and accion == "admin_volver":
+                editar_mensaje_callback(chat_id, message_id, reporte, teclado)
+            else:
+                enviar_mensaje_callback(chat_id, reporte, teclado)
+        else:
+            enviar_mensaje_callback(chat_id, "⛔ No tienes permisos para acceder a este panel.", get_main_menu_keyboard())
+        return
+
+    elif accion == "admin_resumen_negocio":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            resumen_detallado = generar_resumen_completo_negocio()
+            teclado_resumen = {
+                "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+            }
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, resumen_detallado, teclado_resumen)
+            else:
+                enviar_mensaje_callback(chat_id, resumen_detallado, teclado_resumen)
+        return
+
+    elif accion == "admin_cargar_cuenta":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            mensaje_carga = "➕ *CARGAR NUEVA CUENTA Y PINS*\n\nSelecciona a qué plataforma pertenece la cuenta que deseas agregar:"
+            teclado_servicios = {
+                "inline_keyboard": [
+                    [{"text": "📺 Netflix (5 Perfiles)", "callback_data": "admin_cuenta_netflix"}],
+                    [{"text": "📺 Disney+ (7 Perfiles)", "callback_data": "admin_cuenta_disney"}],
+                    [{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]
+                ]
+            }
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, mensaje_carga, teclado_servicios)
+            else:
+                enviar_mensaje_callback(chat_id, mensaje_carga, teclado_servicios)
+        return
+
+    elif accion == "admin_cuenta_netflix" or accion == "admin_cuenta_disney":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            es_netflix = "netflix" in accion
+            servicio_elegido = "Netflix" if es_netflix else "Disney+"
+            limite_perfiles = 5 if es_netflix else 7
+
+            asistente_cuenta_datos[str_chat_id] = {
+                "servicio": servicio_elegido,
+                "limite": limite_perfiles,
+                "paso": "esperando_correo"
+            }
+
+            mensaje_peticion = (
+                f"➕ *NUEVA CUENTA DE {servicio_elegido.upper()}*\n\n"
+                "Paso 1/2: Escribe o pega el **correo y contraseña** de la cuenta\n(Ej: `correo@gmail.com : tucontraseña`):"
+            )
+            teclado_canc = {
+                "inline_keyboard": [[{"text": "🔙 Cancelar y Volver", "callback_data": "admin_volver"}]]
+            }
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, mensaje_peticion, teclado_canc)
+            else:
+                enviar_mensaje_callback(chat_id, mensaje_peticion, teclado_canc)
+        return
+
+    elif accion == "admin_pedir_busqueda":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            esperando_busqueda_admin[str_chat_id] = True
+            mensaje_busqueda = (
+                "🔍 *BUSCAR CLIENTE ACTIVO*\n\n"
+                "Escribe a continuación el **nombre**, **usuario (@)**, **ID de Telegram** o **correo** del cliente que deseas buscar:"
+            )
+            teclado_canc = {
+                "inline_keyboard": [[{"text": "🔙 Cancelar y Volver", "callback_data": "admin_volver"}]]
+            }
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, mensaje_busqueda, teclado_canc)
+            else:
+                enviar_mensaje_callback(chat_id, mensaje_busqueda, teclado_canc)
+        return
+
+    elif accion == "admin_asignar_stock":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            resultado_asignacion = procesar_asignacion_stock_masivo(enviar_mensaje_callback)
+            enviar_mensaje_callback(chat_id, resultado_asignacion, {
+                "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+            })
+        return
+
+    elif accion == "admin_ver_pendientes":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            pendientes = obtener_clientes_pendientes()
+            if not pendientes:
+                enviar_mensaje_callback(chat_id, "✅ No hay pagos pendientes en este momento.", {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
+            else:
+                for idx, row_idx, p in pendientes:
+                    srv_p = safe_get(p, "Servicio", "Disney+")
+                    pnt_p = safe_get(p, "Pantalla", "Perfil 1")
+                    txt = (
+                        f"🟡 *Pago Pendiente #{idx}* (Fila {row_idx})\n"
+                        f"• *Cliente:* {safe_get(p, 'Nombre')}\n"
+                        f"• *Telegram ID:* `{safe_get(p, 'Telegram_ID')}`\n"
+                        f"• *Servicio:* {srv_p} ({pnt_p})\n"
+                        f"• *Cuenta/Correo:* {safe_get(p, 'Cuenta')}"
+                    )
+                    teclado_aprobar = {
+                        "inline_keyboard": [
+                            [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}_digital"}],
+                            [{"text": "❌ Rechazar (Eliminar Fila)", "callback_data": f"rechazar_{row_idx}"}]
+                        ]
+                    }
+                    enviar_mensaje_callback(chat_id, txt, teclado_aprobar)
+        return
+
+    elif accion == "admin_ver_vencidos":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            vencidos = obtener_suscripciones_vencidas()
+            if not vencidos:
+                enviar_mensaje_callback(chat_id, "✅ No hay pantallas vencidas para depurar.", {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
+            else:
+                for idx, row_idx, v in vencidos:
+                    srv_v = safe_get(v, "Servicio", "Disney+")
+                    pnt_v = safe_get(v, "Pantalla", "Perfil 1")
+                    cta_v = safe_get(v, "Cuenta", "Cuenta")
+                    fec_v = safe_get(v, "Vencimiento", "N/A")
+                    txt = (
+                        f"🔴 *Pantalla Vencida #{idx}* (Fila {row_idx})\n"
+                        f"• *Cliente:* {safe_get(v, 'Nombre')}\n"
+                        f"• *Servicio:* {srv_v} ({pnt_v})\n"
+                        f"• *Correo:* `{cta_v}`\n"
+                        f"• *Venció el:* `{fec_v}`"
+                    )
+                    teclado_borrar = {
+                        "inline_keyboard": [
+                            [{"text": "🗑️ Liberar Perfil y Borrar Fila", "callback_data": f"admin_liberar_{row_idx}"}],
+                            [{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]
+                        ]
+                    }
+                    enviar_mensaje_callback(chat_id, txt, teclado_borrar)
+        return
+
+    elif accion.startswith("admin_liberar_"):
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            try:
+                row_idx_a_borrar = int(accion.split("_")[-1])
+                resultado_liberacion = liberar_y_eliminar_fila_suscripcion(row_idx_a_borrar)
+                if message_id:
+                    quitar_botones_telegram(chat_id, message_id)
+                enviar_mensaje_callback(chat_id, resultado_liberacion, {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
+            except Exception as e:
+                enviar_mensaje_callback(chat_id, f"❌ Error al liberar la fila: {e}", get_back_keyboard())
+        return
+
+    elif accion.startswith("admin_expulsar_"):
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            try:
+                row_idx_expulsar = int(accion.split("_")[-1])
+                
+                sheet_principal = conectar_sheets()
+                registros = sheet_principal.get_all_records()
+                fila_obj = registros[row_idx_expulsar - 2] if (row_idx_expulsar - 2) < len(registros) else {}
+                tid_cliente = safe_get(fila_obj, "Telegram_ID", "")
+                srv_exp = safe_get(fila_obj, "Servicio", "Streaming")
+                pnt_exp = safe_get(fila_obj, "Pantalla", "Perfil")
+
+                resultado_expulsion = liberar_y_eliminar_fila_suscripcion(row_idx_expulsar)
+                
+                if message_id:
+                    quitar_botones_telegram(chat_id, message_id)
+
+                enviar_mensaje_callback(chat_id, f"🚨 {resultado_expulsion}", {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
+
+                if tid_cliente:
+                    try:
+                        msg_usuario = (
+                            "⚠️ *AVISO DE SUSPENSIÓN*\n\n"
+                            f"Tu suscripción a *{srv_exp}* ({pnt_exp}) ha sido finalizada por el administrador.\n"
+                            "Si consideras que se trata de un error, comunícate con soporte."
+                        )
+                        enviar_mensaje_callback(int(tid_cliente), msg_usuario, get_main_menu_keyboard())
+                    except Exception:
+                        pass
+            except Exception as e:
+                enviar_mensaje_callback(chat_id, f"❌ Error al expulsar el usuario: {e}", get_back_keyboard())
+        return
+
+    elif accion.startswith("aprobar_"):
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            try:
+                partes_ap = accion.split("_")
+                row_idx = int(partes_ap[1])
+                es_efectivo = (len(partes_ap) > 2 and partes_ap[2].strip() == "efectivo")
+                metodo_pago = "Efectivo" if es_efectivo else "Pago Móvil / Digital"
+
+                exito, tid_cliente, ya_estaba_activa, nombre_cliente, srv_aprobado, perfil_asignado, tipo_operacion, cuenta_fila = aprobar_suscripcion_sheet(row_idx)
+                
+                if message_id:
+                    quitar_botones_telegram(chat_id, message_id)
+
+                if ya_estaba_activa:
+                    enviar_mensaje_callback(chat_id, f"ℹ️ La suscripción de la fila {row_idx} ya había sido aprobada previamente.", get_back_keyboard())
+                    return
+
+                if exito:
+                    monto_venta = PRECIO_NETFLIX_USD if "netflix" in str(srv_aprobado).lower() else PRECIO_DISNEY_USD
+                    
+                    registrar_venta_en_historial(
+                        nombre_cliente, tid_cliente, srv_aprobado, perfil_asignado,
+                        monto_venta, tipo_operacion, metodo_pago
+                    )
+
+                    enviar_mensaje_callback(
+                        chat_id,
+                        f"✅ ¡Fila {row_idx} activada y registrada en *Ventas*!\n"
+                        f"• *Cliente:* {nombre_cliente}\n"
+                        f"• *Servicio:* {srv_aprobado} ({perfil_asignado})\n"
+                        f"• *Cuenta:* `{cuenta_fila}`\n"
+                        f"• *Tipo:* {tipo_operacion}\n"
+                        f"• *Método:* {metodo_pago}",
+                        get_back_keyboard()
+                    )
+                    if tid_cliente:
+                        try:
+                            pin_entregado = obtener_pin_asignado_cliente(cuenta_fila, perfil_asignado)
+                            if "pendiente de stock" in str(cuenta_fila).lower():
+                                msg_cliente = (
+                                    "🎉 *¡Tu pago ha sido verificado y aprobado!*\n\n"
+                                    f"Tu suscripción de *{srv_aprobado}* ({perfil_asignado}) está **Activa** con **prioridad #1**.\n"
+                                    "⏳ Estamos preparando tu cuenta; te notificaremos en cuanto tu correo quede asignado."
+                                )
+                            else:
+                                msg_cliente = (
+                                    "🎉 *¡Tu pago ha sido verificado y aprobado!*\n\n"
+                                    f"Tu servicio de *{srv_aprobado}* ({perfil_asignado}) ya se encuentra *Activo* por 30 días más.\n"
+                                    f"• *PIN de seguridad:* `{pin_entregado}` 🔒\n\n"
+                                    "¡Disfruta tu contenido!"
+                                )
+                            enviar_mensaje_callback(int(tid_cliente), msg_cliente, get_main_menu_keyboard())
+                        except Exception:
+                            pass
+                else:
+                    enviar_mensaje_callback(chat_id, f"❌ Error al actualizar la hoja de cálculo.", get_back_keyboard())
+            except Exception as e:
+                enviar_mensaje_callback(chat_id, f"❌ Error: {e}", get_back_keyboard())
+        return
+
+    elif accion.startswith("rechazar_"):
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            try:
+                row_idx = int(accion.split("_")[1])
+                
+                sheet_principal = conectar_sheets()
+                registros = sheet_principal.get_all_records()
+                fila_obj = registros[row_idx - 2] if (row_idx - 2) < len(registros) else {}
+                tid_cliente = safe_get(fila_obj, "Telegram_ID", "")
+                srv_rechazado = safe_get(fila_obj, "Servicio", "Streaming")
+
+                limpiar_fila_cancelada(row_idx)
+
+                if message_id:
+                    quitar_botones_telegram(chat_id, message_id)
+
+                enviar_mensaje_callback(chat_id, f"❌ Pago de la fila {row_idx} rechazado. Fila eliminada y cupo liberado con éxito.", get_back_keyboard())
+
+                if tid_cliente:
+                    try:
+                        msg_rechazo = (
+                            "⚠️ *COMPROBANTE RECHAZADO*\n\n"
+                            f"Tu comprobante de pago para *{srv_rechazado}* no pudo ser verificado (puede ser ilegible, incorrecto o duplicado).\n\n"
+                            "Por favor, verifica los datos e intenta realizar la compra o reporte nuevamente desde el menú."
+                        )
+                        enviar_mensaje_callback(int(tid_cliente), msg_rechazo, get_main_menu_keyboard())
+                    except Exception:
+                        pass
+            except Exception as e:
+                enviar_mensaje_callback(chat_id, f"❌ Error al rechazar: {e}", get_back_keyboard())
+        return
+
+    # Mensaje por defecto si no coincide con ninguna acción
     else:
         mensaje = "¡Hola! Selecciona una opción del menú de abajo:"
         teclado = get_main_menu_keyboard()
@@ -1805,7 +2103,7 @@ def generar_reporte_admin():
             "📊 *PANEL DE CONTROL INDUSTRIAL*\n\n"
             f"👥 *Clientes únicos:* {unicos}\n"
             f"📺 *Total pantallas:* {len(registros)}\n"
-            f"🟢 *Activas:* {activos}\n"
+            f"🟢 *Activas:* {activas}\n"
             f"🟡 *Pagos pendientes:* {pendientes}\n"
             f"🔴 *Vencidas por depurar:* {vencidos_total}\n"
             f"⏳ *En espera de stock:* {en_espera_stock}"
