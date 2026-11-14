@@ -777,7 +777,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     f"🔹 *Suscripción #{idx} ({servicio})*\n"
                     f"• *Correo:* {correo_mostrar}\n"
                     f"• *Perfil:* {pantalla}\n"
-                    f"• *PIN de seguridad:* {pin_mostrar} 🔒\n"
+                    f"• *PIN:* {pin_mostrar} 🔒\n"
                     f"• *Vencimiento:* {vencimiento} {alerta_vencimiento}\n"
                     f"• *Estado:* {estado}"
                 )
