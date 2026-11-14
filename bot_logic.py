@@ -74,7 +74,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma con reciclaje inteligente de perfiles y gestión de cuentas."""
+    """Cerebro industrial multi-plataforma con reciclaje inteligente de perfiles y soporte técnico centralizado."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -116,15 +116,11 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
         texto_confirmacion = (
             "✅ *¡Captura de pago recibida con éxito!*\n\n"
-            "Se la hemos enviado al administrador. En breve tu pago será verificado y tu cuenta activada.\n\n"
-            "💡 *Sugerencia:* Si deseas agilizarlo aún más, puedes avisarnos también por WhatsApp:"
+            "Se la hemos enviado al administrador. En breve tu pago será verificado y tu cuenta activada."
         )
-        texto_wa = f"Hola, acabo de enviar mi captura de pago por el bot. Mi ID es: {str_chat_id}."
-        url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_wa.replace(' ', '%20')}"
         
         teclado_cliente = {
             "inline_keyboard": [
-                [{"text": "💬 Avisar por WhatsApp", "url": url_whatsapp}],
                 [{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]
             ]
         }
@@ -531,11 +527,11 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_wa.replace(' ', '%20')}"
         teclado_whatsapp = {
             "inline_keyboard": [
-                [{"text": "💬 Abrir WhatsApp", "url": url_whatsapp}],
+                [{"text": "💬 Soporte Técnico en WhatsApp", "url": url_whatsapp}],
                 [{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]
             ]
         }
-        mensaje = "💬 *ATENCIÓN AL CLIENTE*\n\nComunícate directamente con nosotros por WhatsApp:"
+        mensaje = "💬 *ATENCIÓN AL CLIENTE*\n\nSi tienes dudas o requieres soporte técnico, comunícate con nosotros por WhatsApp:"
         if es_callback and editar_mensaje_callback:
             editar_mensaje_callback(chat_id, message_id, mensaje, teclado_whatsapp)
         else:
@@ -624,8 +620,8 @@ def iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, servicio_clave,
     tasa_usdt = obtener_tasa_usdt_hoy()
     monto_bs = round(precio_usd * tasa_usdt, 2)
 
-    texto_wa = f"Hola, acabo de realizar el pago móvil de {monto_bs} Bs ({precio_usd} USDT) para {servicio_elegido}. Mi ID es: {str_chat_id}."
-    url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_wa.replace(' ', '%20')}"
+    texto_soporte = f"Hola, tengo dudas o necesito asistencia técnica con mi servicio de Streaming. Mi ID de Telegram es: {str_chat_id}."
+    url_whatsapp_soporte = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_soporte.replace(' ', '%20')}"
 
     aviso_stock = ""
     if sin_stock:
@@ -646,18 +642,18 @@ def iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, servicio_clave,
         f"• *Cédula:* `{PAGO_MOVIL_CEDULA}`\n"
         f"• *Teléfono:* `{PAGO_MOVIL_TELEFONO}`\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📸 *PASO FINAL:* Realiza el pago y **envía la captura de pantalla (o el número de referencia)** directamente por este chat para activar tus 30 días."
+        f"📸 *PASO FINAL:* Realiza el pago y **envía tu captura o referencia por este mismo chat**. (No es necesario enviarlo por WhatsApp)."
     )
-    teclado_renovar = {
+    teclado_pago = {
         "inline_keyboard": [
-            [{"text": "💬 Enviar comprobante por WhatsApp", "url": url_whatsapp}],
+            [{"text": "💬 Soporte Técnico (Solo dudas)", "url": url_whatsapp_soporte}],
             [{"text": "🔙 Cancelar y Volver", "callback_data": "menu_principal"}]
         ]
     }
     if es_cb and editar_cb:
-        editar_cb(chat_id, message_id, mensaje, teclado_renovar)
+        editar_cb(chat_id, message_id, mensaje, teclado_pago)
     else:
-        enviar_cb(chat_id, mensaje, teclado_renovar)
+        enviar_cb(chat_id, mensaje, teclado_pago)
 
 
 def quitar_botones_telegram(chat_id, message_id):
@@ -771,20 +767,17 @@ def obtener_primer_perfil_disponible(sheet, servicio_solicitado, correo_asignado
         for r in registros:
             srv = safe_get(r, "Servicio", "").lower()
             cta = safe_get(r, "Cuenta", "").lower()
-            pnt = safe_get(r, "Pantalla", "").lower() # Ej: "Perfil 1"
+            pnt = safe_get(r, "Pantalla", "").lower()
             
             if servicio_solicitado.lower() in srv and cta == correo_asignado.lower():
-                # Extraemos el número del texto "Perfil X"
                 for num in range(1, limite_maximo + 1):
                     if f"perfil {num}" in pnt:
                         perfiles_ocupados_en_cuenta.add(num)
 
-        # Buscamos cuál es el primer número que NO está ocupado
         for num in range(1, limite_maximo + 1):
             if num not in perfiles_ocupados_en_cuenta:
                 return f"Perfil {num}"
 
-        # Si por alguna razón están todos ocupados, retorna el siguiente secuencial
         return f"Perfil {limite_maximo + 1}"
     except Exception as e:
         print(f"Error buscando perfil disponible: {e}")
@@ -970,10 +963,7 @@ def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disne
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
         
-        # 1. Obtenemos el correo disponible
         correo_asignado = asignar_correo_desde_stock(sheet, servicio, str_chat_id, nombre_completo, enviar_mensaje_cb)
-        
-        # 2. Obtenemos el primer perfil vacante (reciclado) en esa cuenta
         perfil_asignado = obtener_primer_perfil_disponible(sheet, servicio, correo_asignado)
         
         sheet.append_row([str(str_chat_id), nombre_completo, correo_asignado, perfil_asignado, "", "Pendiente Pago", servicio])
@@ -1020,7 +1010,6 @@ def obtener_suscripciones_vencidas():
             estado = safe_get(row, "Estado", "").lower()
             cuenta = safe_get(row, "Cuenta", "")
 
-            # Si tiene correo asignado y fecha de vencimiento
             if cuenta and cuenta.lower() not in ("por asignar", "pendiente de stock"):
                 for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
                     try:
@@ -1047,15 +1036,12 @@ def liberar_y_eliminar_fila_suscripcion(row_idx):
         except Exception:
             return "❌ No se encontró la pestaña 'Cuentas'."
 
-        # 1. Leemos los datos de la fila antes de borrarla para saber qué cuenta y servicio liberar
         fila_datos = sheet_principal.row_values(row_idx)
         if len(fila_datos) < 3:
             return "❌ La fila seleccionada no es válida o está vacía."
 
         correo_a_liberar = safe_get({"Cuenta": fila_datos[2]}, "Cuenta", "")
-        servicio_fila = safe_get({"Servicio": fila_datos[6] if len(fila_datos) > 6 else ""}, "Servicio", "Disney+")
-
-        # 2. Buscamos esa cuenta en la pestaña Cuentas para actualizar su contador (-1)
+        
         registros_cuentas = sheet_cuentas.get_all_records()
         cuenta_encontrada = False
 
@@ -1068,17 +1054,15 @@ def liberar_y_eliminar_fila_suscripcion(row_idx):
                     ocupados = 1
 
                 nuevos_ocupados = max(0, ocupados - 1)
-                sheet_cuentas.update_cell(idx_c, 5, nuevos_ocupados) # Columna E (Perfiles Ocupados)
+                sheet_cuentas.update_cell(idx_c, 5, nuevos_ocupados)
 
-                # Si estaba Llena y ahora tiene espacio, la devolvemos a estado Activa
                 estado_actual = safe_get(c_row, "Estado", "").lower()
                 if estado_actual == "llena":
-                    sheet_cuentas.update_cell(idx_c, 6, "Activa") # Columna F (Estado)
+                    sheet_cuentas.update_cell(idx_c, 6, "Activa")
 
                 cuenta_encontrada = True
                 break
 
-        # 3. Borramos la fila del cliente de la hoja principal
         sheet_principal.delete_rows(row_idx)
 
         msg_extra = " y se liberó un cupo en la cuenta maestra" if cuenta_encontrada else ""
