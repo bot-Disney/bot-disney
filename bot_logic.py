@@ -12,7 +12,7 @@ ADMIN_ID = str(os.getenv("ADMIN_TELEGRAM_ID", "")).strip()
 # CONFIGURACIÓN DE PRECIOS (USD/USDT) Y DATOS DE PAGO MÓVIL
 # =============================================================
 PRECIO_DISNEY_USD = 5.0   # Precio en USD de Disney+
-PRECIO_NETFLIX_USD = 4.5  # Precio en USD de Netflix
+PRECIO_NETFLIX_USD = 4.5  # Precio in USD de Netflix
 TASA_RESPALDO_BS = 65.0   # Tasa de respaldo por si fallan las consultas externas
 
 PAGO_MOVIL_BANCO = "🏦 Provincial (0108)"
@@ -23,8 +23,9 @@ control_intentos_otp = {}
 MAX_INTENTOS_RAPIDOS = 2
 COOLDOWN_SEGUNDOS = 180
 
-# Control de usuarios que están esperando enviar captura de pago
+# Control de estados temporales de los usuarios
 esperando_captura_pago = {}
+esperando_nuevo_nombre_perfil = {}  # Guarda chat_id -> row_idx cuando el usuario va a renombrar su perfil
 
 
 def safe_get(row_dict, key, default=""):
@@ -74,10 +75,68 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma con rechazo inteligente y limpieza de registros falsos."""
+    """Cerebro industrial con soporte para personalización de nombres de perfiles."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
+
+    # -------------------------------------------------------------
+    # CAPTURA DE TEXTO: NUEVO NOMBRE DE PERFIL PERSONALIZADO
+    # -------------------------------------------------------------
+    if not es_callback and str_chat_id in esperando_nuevo_nombre_perfil and texto:
+        row_idx_perfil = esperando_nuevo_nombre_perfil.pop(str_chat_id)
+        nuevo_nombre = texto.strip()
+
+        if len(nuevo_nombre) > 20:
+            enviar_mensaje_callback(chat_id, "⚠️ El nombre es demasiado largo (máximo 20 caracteres). Por favor escribe uno más corto:", get_back_keyboard())
+            esperando_nuevo_nombre_perfil[str_chat_id] = row_idx_perfil
+            return
+
+        try:
+            sheet = conectar_sheets()
+            registros = sheet.get_all_records()
+            fila_obj = registros[row_idx_perfil - 2] if (row_idx_perfil - 2) < len(registros) else {}
+            
+            servicio_perfil = safe_get(fila_obj, "Servicio", "Streaming")
+            cuenta_perfil = safe_get(fila_obj, "Cuenta", "Correo")
+            perfil_actual_texto = safe_get(fila_obj, "Pantalla", "Perfil 1")
+            
+            # Extraemos el número base del perfil (Ej: "Perfil 3" de "Perfil 3 (Juan)") para mantener la lógica interna
+            numero_base = "Perfil 1"
+            for n in range(1, 8):
+                if f"perfil {n}" in perfil_actual_texto.lower():
+                    numero_base = f"Perfil {n}"
+                    break
+
+            # Guardamos en la columna de Pantalla el formato limpio: "Perfil 3 (NombrePersonalizado)"
+            nuevo_valor_celda = f"{numero_base} ({nuevo_nombre})"
+            sheet.update_cell(row_idx_perfil, 4, nuevo_valor_celda) # Columna D es Pantalla
+
+            # Notificamos al Administrador
+            if ADMIN_ID and enviar_foto_callback or ADMIN_ID:
+                texto_admin = (
+                    "✏️ *¡SOLICITUD DE CAMBIO DE NOMBRE DE PERFIL!* ✏️\n\n"
+                    f"• *Cliente:* {nombre} (@{username})\n"
+                    f"• *Telegram ID:* `{str_chat_id}`\n"
+                    f"• *Servicio:* {servicio_perfil}\n"
+                    f"• *Correo/Cuenta:* `{cuenta_perfil}`\n"
+                    f"• *Perfil base:* {numero_base}\n"
+                    f"• *Nuevo nombre solicitado:* `{nuevo_nombre}`\n\n"
+                    "💡 *Acción:* Entra a la plataforma y cambia el nombre de este perfil para que coincida."
+                )
+                enviar_mensaje_callback(int(ADMIN_ID), texto_admin)
+
+            enviar_mensaje_callback(
+                chat_id,
+                f"✅ *¡Nombre de perfil actualizado con éxito!*\n\n"
+                f"Tu perfil ahora aparece como: *{nuevo_valor_celda}*.\n"
+                "Hemos notificado al administrador para que aplique el cambio visual en la plataforma.",
+                get_main_menu_keyboard()
+            )
+        except Exception as e:
+            print(f"Error actualizando nombre de perfil: {e}")
+            enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error al actualizar el nombre. Intenta de nuevo.", get_back_keyboard())
+        return
 
     # -------------------------------------------------------------
     # CANCELAR Y VOLVER AL MENÚ (LIMPIEZA DE FILAS HUÉRFANAS)
@@ -86,6 +145,8 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         if str_chat_id in esperando_captura_pago:
             row_huerta = esperando_captura_pago.pop(str_chat_id)
             limpiar_fila_cancelada(row_huerta)
+        if str_chat_id in esperando_nuevo_nombre_perfil:
+            esperando_nuevo_nombre_perfil.pop(str_chat_id)
             
         texto_menu = (
             "🤖 *Bienvenido al servicio de Streaming*\n\n"
@@ -364,14 +425,12 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             try:
                 row_idx = int(accion.split("_")[1])
                 
-                # Leemos datos de la fila antes de borrarla para notificar al cliente y liberar stock
                 sheet_principal = conectar_sheets()
                 registros = sheet_principal.get_all_records()
                 fila_obj = registros[row_idx - 2] if (row_idx - 2) < len(registros) else {}
                 tid_cliente = safe_get(fila_obj, "Telegram_ID", "")
                 srv_rechazado = safe_get(fila_obj, "Servicio", "Streaming")
 
-                # Ejecutamos la misma función de limpieza para borrar la fila y liberar el cupo en Cuentas
                 limpiar_fila_cancelada(row_idx)
 
                 if message_id:
@@ -436,12 +495,34 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 )
 
             mensaje = encabezado + "\n\n".join(bloques)
-            teclado = get_datos_keyboard(mostrar_renovar=tiene_por_renovar)
+            teclado = get_datos_keyboard(mostrar_renovar=tiene_por_renovar, suscripciones=suscripciones)
             
         if es_callback and editar_mensaje_callback:
             editar_mensaje_callback(chat_id, message_id, mensaje, teclado)
         else:
             enviar_mensaje_callback(chat_id, mensaje, teclado)
+
+    elif accion.startswith("renombrar_perfil_"):
+        try:
+            row_idx_renombrar = int(accion.split("_")[-1])
+            esperando_nuevo_nombre_perfil[str_chat_id] = row_idx_renombrar
+
+            mensaje_peticion = (
+                "✏️ *PERSONALIZAR NOMBRE DE PERFIL*\n\n"
+                "Escribe a continuación el nombre que deseas asignarle a tu perfil (Ej: *Papá*, *Sofía*, *Cine*).\n\n"
+                "⚠️ *Nota:* Solo puedes cambiar el nombre de tu perfil una vez por ciclo de suscripción."
+            )
+            teclado_canc = {
+                "inline_keyboard": [[{"text": "🔙 Cancelar y Volver", "callback_data": "ver_datos"}]]
+            }
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, mensaje_peticion, teclado_canc)
+            else:
+                enviar_mensaje_callback(chat_id, mensaje_peticion, teclado_canc)
+        except Exception as e:
+            print(f"Error iniciando renombrado: {e}")
+            enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error. Intenta de nuevo.", get_back_keyboard())
+        return
 
     elif accion == "obtener_codigo" or "codigo" in accion:
         if str_chat_id in esperando_captura_pago:
@@ -599,7 +680,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, mensaje, teclado_whatsapp)
 
     else:
-        mensaje = "¡Hola! Selecciona una opción del menú de abajo:"
+        mensaje = "¡Hola! Selecciona una opción del menú di abajo:"
         teclado = get_main_menu_keyboard()
         enviar_mensaje_callback(chat_id, mensaje, teclado)
 
@@ -620,7 +701,6 @@ def limpiar_fila_cancelada(row_idx):
 
         estado_actual = safe_get({"Estado": fila_datos[5] if len(fila_datos) > 5 else ""}, "Estado", "").lower()
         
-        # Limpiamos si estaba pendiente de pago o marcado como pendiente
         if "pendiente" in estado_actual or estado_actual == "":
             correo_a_liberar = safe_get({"Cuenta": fila_datos[2]}, "Cuenta", "")
             
@@ -813,7 +893,7 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
     if codigo:
         mensaje = f"🔑 *Tu código de acceso de {nombre_plataforma} es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu pantalla)_"
     else:
-        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado en tu TV hace unos segundos e intenta de nuevo."
+        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado in tu TV hace unos segundos e intenta de nuevo."
 
     teclado = get_back_keyboard()
     if es_cb and editar_cb:
@@ -851,7 +931,7 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
                 [{"text": "❌ Rechazar (Eliminar Fila)", "callback_data": f"rechazar_{row_idx_pendiente}"}]
             ]
         }
-        enviar_foto_callback(int(ADMIN_ID), texto_admin, teclado_admin)
+        enviar_foto_callback(int(ADMIN_ID), photo_file_id, caption_admin, teclado_admin)
 
     enviar_cb(chat_id, "✅ Reporte enviado con éxito al administrador. En breve verificaremos tu referencia.", get_main_menu_keyboard())
 
@@ -1295,9 +1375,23 @@ def get_main_menu_keyboard():
     }
 
 
-def get_datos_keyboard(mostrar_renovar=False):
+def get_datos_keyboard(mostrar_renovar=False, suscripciones=None):
     botones = []
-    if mostrar_renovar: botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}])
+    
+    # Si el cliente tiene suscripciones, agregamos la opción de personalizar nombre de perfil
+    if suscripciones:
+        for sub in suscripciones:
+            r_idx = sub.get("_row_index")
+            srv = safe_get(sub, "Servicio", "Disney+")
+            pnt = safe_get(sub, "Pantalla", "Perfil 1")
+            estado_sub = safe_get(sub, "Estado", "").lower()
+            
+            if estado_sub == "activo" and r_idx:
+                botones.append([{"text": f"✏️ Cambiar Nombre a {srv} ({pnt})", "callback_data": f"renombrar_perfil_{r_idx}"}])
+
+    if mostrar_renovar: 
+        botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}])
+        
     botones.append([{"text": "➕ Comprar Pantalla Adicional", "callback_data": "comprar_extra"}])
     botones.append([{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}])
     return {"inline_keyboard": botones}
