@@ -23,7 +23,7 @@ control_intentos_otp = {}
 MAX_INTENTOS_RAPIDOS = 2
 COOLDOWN_SEGUNDOS = 180
 
-# Control de usuarios que están esperando enviar captura de pago
+# Control de usuarios que están esperando enviar captura de pago (Guarda chat_id -> row_idx exacto)
 esperando_captura_pago = {}
 
 
@@ -74,10 +74,29 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma con reciclaje inteligente de perfiles y soporte técnico centralizado."""
+    """Cerebro industrial multi-plataforma con limpieza automática de filas huérfanas al cancelar."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
+
+    # -------------------------------------------------------------
+    # CANCELAR Y VOLVER AL MENÚ (LIMPIEZA DE FILAS HUÉRFANAS)
+    # -------------------------------------------------------------
+    if accion == "menu_principal" or accion == "/start" or accion == "/menu":
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+            
+        texto_menu = (
+            "🤖 *Bienvenido al servicio de Streaming*\n\n"
+            "Gestiona tus pantallas, códigos de acceso y renovaciones desde los botones de abajo:"
+        )
+        teclado = get_main_menu_keyboard()
+        if es_callback and editar_mensaje_callback:
+            editar_mensaje_callback(chat_id, message_id, texto_menu, teclado)
+        else:
+            enviar_mensaje_callback(chat_id, texto_menu, teclado)
+        return
 
     # -------------------------------------------------------------
     # CAPTURA DE FOTO / COMPROBANTE ENVIADO POR EL CLIENTE
@@ -137,7 +156,8 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     # -------------------------------------------------------------
     if accion == "efectivo" or accion == "/efectivo":
         if str_chat_id in esperando_captura_pago:
-            esperando_captura_pago.pop(str_chat_id, None)
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
 
         suscripciones = obtener_suscripciones_por_id(chat_id)
         botones_selector = []
@@ -173,6 +193,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         try:
             servicio_elegido = "Netflix" if "netflix" in accion else "Disney+"
             nueva_fila_idx = crear_nueva_fila_pendiente(str_chat_id, nombre, username, servicio_elegido, enviar_mensaje_callback)
+            esperando_captura_pago[str_chat_id] = nueva_fila_idx
             notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, nueva_fila_idx, "Pantalla Nueva", enviar_mensaje_callback, editar_mensaje_callback, message_id, es_callback)
         except Exception as e:
             print(f"Error en efectivo nuevo: {e}")
@@ -183,6 +204,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     # PANEL DE ADMINISTRADOR Y GESTIÓN DE VENCIDOS
     # -------------------------------------------------------------
     if accion == "/admin" or accion == "admin_volver":
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             reporte = generar_reporte_admin()
             teclado = {
@@ -345,21 +370,11 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
     # -------------------------------------------------------------
     # MENÚ PRINCIPAL Y CLIENTE
     # -------------------------------------------------------------
-    elif accion == "menu_principal" or accion == "/start" or accion == "/menu":
-        if str_chat_id in esperando_captura_pago:
-            esperando_captura_pago.pop(str_chat_id, None)
-            
-        texto_menu = (
-            "🤖 *Bienvenido al servicio de Streaming*\n\n"
-            "Gestiona tus pantallas, códigos de acceso y renovaciones desde los botones de abajo:"
-        )
-        teclado = get_main_menu_keyboard()
-        if es_callback and editar_mensaje_callback:
-            editar_mensaje_callback(chat_id, message_id, texto_menu, teclado)
-        else:
-            enviar_mensaje_callback(chat_id, texto_menu, teclado)
-
     elif accion == "ver_datos" or "cuenta" in accion:
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+
         suscripciones = obtener_suscripciones_por_id(chat_id)
         if not suscripciones:
             mensaje = "⚠️ Aún no tienes ninguna pantalla registrada con este ID de Telegram.\n\nSelecciona *➕ Otra Pantalla* o *🔄 Renovar* en el menú para comenzar."
@@ -403,6 +418,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, mensaje, teclado)
 
     elif accion == "obtener_codigo" or "codigo" in accion:
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+
         if not verificar_cliente_activo(chat_id):
             mensaje = "🔒 *ACCESO RESTRINGIDO*\n\nPara solicitar códigos, debes tener al menos una pantalla en estado *Activo* y con correo asignado."
             teclado = get_datos_keyboard(mostrar_renovar=True)
@@ -456,6 +475,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error al seleccionar la pantalla. Intenta de nuevo.", get_back_keyboard())
 
     elif accion == "renovar_suscripcion":
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+
         suscripciones = obtener_suscripciones_por_id(chat_id)
         if not suscripciones:
             procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback, message_id, True, "comprar_extra", None, enviar_foto_callback)
@@ -497,6 +520,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error al seleccionar la pantalla. Intenta de nuevo.", get_back_keyboard())
 
     elif accion == "comprar_extra":
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+
         mensaje = (
             "🛒 *SELECCIONA EL SERVICIO A COMPRAR*\n\n"
             "¿Qué plataforma deseas comprar como nueva pantalla?\n\n"
@@ -516,6 +543,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             enviar_mensaje_callback(chat_id, mensaje, teclado_servicios)
 
     elif accion.startswith("pagar_servicio_"):
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+
         es_netflix = "netflix" in accion
         servicio_elegido = "Netflix" if es_netflix else "Disney+"
         
@@ -523,6 +554,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, "netflix" if es_netflix else "disney", "nueva", nueva_fila_idx, message_id, enviar_mensaje_callback, editar_mensaje_callback, es_callback)
 
     elif accion == "soporte" or "pago" in accion:
+        if str_chat_id in esperando_captura_pago:
+            row_huerta = esperando_captura_pago.pop(str_chat_id)
+            limpiar_fila_cancelada(row_huerta)
+
         texto_wa = f"Hola, necesito soporte con mi servicio de Streaming. Mi ID es: {str_chat_id}."
         url_whatsapp = f"https://wa.me/{WHATSAPP_NUMERO}?text={texto_wa.replace(' ', '%20')}"
         teclado_whatsapp = {
@@ -541,6 +576,49 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         mensaje = "¡Hola! Selecciona una opción del menú de abajo:"
         teclado = get_main_menu_keyboard()
         enviar_mensaje_callback(chat_id, mensaje, teclado)
+
+
+def limpiar_fila_cancelada(row_idx):
+    """Borra la fila huérfana si el usuario canceló el pago y libera el cupo en la cuenta maestra."""
+    try:
+        sheet_principal = conectar_sheets()
+        spreadsheet = sheet_principal.spreadsheet
+        
+        try:
+            fila_datos = sheet_principal.row_values(row_idx)
+        except Exception:
+            return
+
+        if len(fila_datos) < 3:
+            return
+
+        estado_actual = safe_get({"Estado": fila_datos[5] if len(fila_datos) > 5 else ""}, "Estado", "").lower()
+        
+        # Solo limpiamos si todavía estaba pendiente de pago (nunca se aprobó)
+        if "pendiente" in estado_actual:
+            correo_a_liberar = safe_get({"Cuenta": fila_datos[2]}, "Cuenta", "")
+            
+            if correo_a_liberar and "pendiente de stock" not in correo_a_liberar.lower():
+                try:
+                    sheet_cuentas = spreadsheet.worksheet("Cuentas")
+                    registros_cuentas = sheet_cuentas.get_all_records()
+                    for idx_c, c_row in enumerate(registros_cuentas, start=2):
+                        correo_cta = safe_get(c_row, "Correo (Usuario)", safe_get(c_row, "Correo", ""))
+                        if correo_cta.lower() == correo_a_liberar.lower():
+                            ocupados = int(safe_get(c_row, "Perfiles Ocupados", "1"))
+                            nuevos_ocupados = max(0, ocupados - 1)
+                            sheet_cuentas.update_cell(idx_c, 5, nuevos_ocupados)
+                            
+                            if safe_get(c_row, "Estado", "").lower() == "llena":
+                                sheet_cuentas.update_cell(idx_c, 6, "Activa")
+                            break
+                except Exception as e:
+                    print(f"Aviso al liberar stock en cancelación: {e}")
+
+            sheet_principal.delete_rows(row_idx)
+            print(f"Fila huérfana {row_idx} eliminada por cancelación del usuario.")
+    except Exception as e:
+        print(f"Error limpiando fila cancelada: {e}")
 
 
 def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_target, detalle_operacion, enviar_cb, editar_cb=None, message_id=None, es_cb=False):
