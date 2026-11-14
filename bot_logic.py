@@ -23,10 +23,12 @@ control_intentos_otp = {}
 MAX_INTENTOS_RAPIDOS = 2
 COOLDOWN_SEGUNDOS = 180
 
-# Control de estados temporales de los usuarios
+# Control de estados temporales de los usuarios y administrador
 esperando_captura_pago = {}
 esperando_nuevo_nombre_perfil = {}
-esperando_busqueda_admin = {}  # Guarda chat_id -> True cuando el admin está escribiendo un nombre para buscar
+esperando_busqueda_admin = {}
+esperando_nueva_cuenta_servicio = {}  # Guarda chat_id -> "Netflix" o "Disney+"
+esperando_nueva_cuenta_correo = {}    # Guarda chat_id -> servicio cuando espera el correo/contraseña
 
 
 def safe_get(row_dict, key, default=""):
@@ -76,10 +78,63 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial con buscador y filtro inteligente para el administrador."""
+    """Cerebro industrial con capacidad de carga de cuentas maestras desde Telegram."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
+
+    # -------------------------------------------------------------
+    # ASISTENTE ADMIN: CARGAR NUEVA CUENTA MAESTRO (CORREO Y CLAVE)
+    # -------------------------------------------------------------
+    if not es_callback and ADMIN_ID and str_chat_id == ADMIN_ID and str_chat_id in esperando_nueva_cuenta_correo and texto:
+        servicio_cuenta = esperando_nueva_cuenta_correo.pop(str_chat_id)
+        datos_cuenta = texto.strip()
+
+        try:
+            sheet_principal = conectar_sheets()
+            spreadsheet = sheet_principal.spreadsheet
+            
+            try:
+                sheet_cuentas = spreadsheet.worksheet("Cuentas")
+            except Exception:
+                # Si no existe la pestaña Cuentas, la creamos con sus encabezados industriales
+                sheet_cuentas = spreadsheet.add_worksheet(title="Cuentas", rows="1000", cols="6")
+                sheet_cuentas.append_row(["Servicio", "Correo", "Contraseña", "Capacidad Total", "Perfiles Ocupados", "Estado"])
+
+            capacidad_defecto = 5 if "netflix" in servicio_cuenta.lower() else 7
+            
+            # Agregamos la fila a la pestaña Cuentas: [Servicio, Correo/Contraseña, Capacidad, 0, Activa]
+            # (Asumimos que el usuario escribe algo como "correo@gmail.com : contraseña" o todo junto)
+            sheet_cuentas.append_row([
+                servicio_cuenta,
+                datos_cuenta,
+                "",  # Espacio para contraseña si va separada o integrada
+                str(capacidad_defecto),
+                "0",
+                "Activa"
+            ])
+
+            enviar_mensaje_callback(
+                chat_id,
+                f"✅ *¡CUENTA MAESTRA CARGADA CON ÉXITO!*\n\n"
+                f"• *Servicio:* {servicio_cuenta}\n"
+                f"• *Detalle:* `{datos_cuenta}`\n"
+                f"• *Capacidad:* {capacidad_defecto} perfiles\n"
+                f"• *Estado:* Activa (0 ocupados)\n\n"
+                "La cuenta ya está disponible para recibir clientes o asignar stock pendiente.",
+                {
+                    "inline_keyboard": [
+                        [{"text": "📦 Asignar Stock Pendiente Ahora", "callback_data": "admin_asignar_stock"}],
+                        [{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]
+                    ]
+                }
+            )
+        except Exception as e:
+            print(f"Error cargando cuenta maestro: {e}")
+            enviar_mensaje_callback(chat_id, f"❌ Ocurrió un error al guardar la cuenta en Google Sheets: {e}", {
+                "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+            })
+        return
 
     # -------------------------------------------------------------
     # BÚSQUEDA DE CLIENTE POR PARTE DEL ADMINISTRADOR
@@ -207,6 +262,8 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             esperando_nuevo_nombre_perfil.pop(str_chat_id)
         if str_chat_id in esperando_busqueda_admin:
             esperando_busqueda_admin.pop(str_chat_id)
+        if str_chat_id in esperando_nueva_cuenta_correo:
+            esperando_nueva_cuenta_correo.pop(str_chat_id)
             
         texto_menu = (
             "🤖 *Bienvenido al servicio de Streaming*\n\n"
@@ -290,7 +347,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             cta = safe_get(sub, "Cuenta", "Cuenta")
             botones_selector.append([{"text": f"🔄 Renovar {srv} - {pnt} ({cta})", "callback_data": f"efectivo_fila_{r_idx}"}])
 
-        botones_selector.append([{"text": f"➕ Nueva Pantalla Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": "efectivo_nuevo_disney"}],)
+        botones_selector.append([{"text": f"➕ Nueva Pantalla Disney+ (${PRECIO_DISNEY_USD:.2f})", "callback_data": "efectivo_nuevo_disney"}])
         botones_selector.append([{"text": f"➕ Nueva Pantalla Netflix (${PRECIO_NETFLIX_USD:.2f})", "callback_data": "efectivo_nuevo_netflix"}])
         botones_selector.append([{"text": "🔙 Cancelar y Volver", "callback_data": "menu_principal"}])
 
@@ -322,7 +379,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # PANEL DE ADMINISTRADOR Y BÚSQUEDA DE CLIENTES
+    # PANEL DE ADMINISTRADOR Y CARGA DE CUENTAS MAESTRAS
     # -------------------------------------------------------------
     if accion == "/admin" or accion == "admin_volver":
         if str_chat_id in esperando_captura_pago:
@@ -330,12 +387,15 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             limpiar_fila_cancelada(row_huerta)
         if str_chat_id in esperando_busqueda_admin:
             esperando_busqueda_admin.pop(str_chat_id)
+        if str_chat_id in esperando_nueva_cuenta_correo:
+            esperando_nueva_cuenta_correo.pop(str_chat_id)
 
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             reporte = generar_reporte_admin()
             teclado = {
                 "inline_keyboard": [
                     [{"text": "📋 Ver Pagos Pendientes", "callback_data": "admin_ver_pendientes"}],
+                    [{"text": "➕ Cargar Cuenta Maestro (Stock)", "callback_data": "admin_cargar_cuenta"}],
                     [{"text": "🔍 Buscar y Gestionar Cliente Activo", "callback_data": "admin_pedir_busqueda"}],
                     [{"text": "🗑️ Gestionar / Eliminar Vencidos", "callback_data": "admin_ver_vencidos"}],
                     [{"text": "📦 Asignar Stock Pendiente", "callback_data": "admin_asignar_stock"}],
@@ -348,6 +408,40 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 enviar_mensaje_callback(chat_id, reporte, teclado)
         else:
             enviar_mensaje_callback(chat_id, "⛔ No tienes permisos para acceder a este panel.", get_main_menu_keyboard())
+        return
+
+    elif accion == "admin_cargar_cuenta":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            mensaje_carga = "➕ *CARGAR NUEVA CUENTA MAESTRO*\n\nSelecciona a qué plataforma pertenece la cuenta que deseas agregar:"
+            teclado_servicios = {
+                "inline_keyboard": [
+                    [{"text": "📺 Netflix (Capacidad: 5)", "callback_data": "admin_cuenta_netflix"}],
+                    [{"text": "📺 Disney+ (Capacidad: 7)", "callback_data": "admin_cuenta_disney"}],
+                    [{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]
+                ]
+            }
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, mensaje_carga, teclado_servicios)
+            else:
+                enviar_mensaje_callback(chat_id, mensaje_carga, teclado_servicios)
+        return
+
+    elif accion == "admin_cuenta_netflix" or accion == "admin_cuenta_disney":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            servicio_elegido = "Netflix" if "netflix" in accion else "Disney+"
+            esperando_nueva_cuenta_correo[str_chat_id] = servicio_elegido
+
+            mensaje_peticion = (
+                f"➕ *NUEVA CUENTA DE {servicio_elegido.upper()}*\n\n"
+                "Escribe o pega a continuación el correo y la contraseña de la cuenta\n(Ej: `correo@gmail.com : tucontraseña`):"
+            )
+            teclado_canc = {
+                "inline_keyboard": [[{"text": "🔙 Cancelar y Volver", "callback_data": "admin_volver"}]]
+            }
+            if es_callback and editar_mensaje_callback:
+                editar_mensaje_callback(chat_id, message_id, mensaje_peticion, teclado_canc)
+            else:
+                enviar_mensaje_callback(chat_id, mensaje_peticion, teclado_canc)
         return
 
     elif accion == "admin_pedir_busqueda":
@@ -1537,7 +1631,7 @@ def get_datos_keyboard(mostrar_renovar=False, suscripciones=None):
             botones.append([{"text": "✏️ Personalizar Nombres de Perfil", "callback_data": "menu_renombrar"}])
 
     if mostrar_renovar: 
-        botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}])
+        botones.append([{"text": "🔄 Renovar Suscripción", "callback_data": "renovar_suscripcion"}],)
         
     botones.append([{"text": "➕ Comprar Pantalla Adicional", "callback_data": "comprar_extra"}])
     botones.append([{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}])
