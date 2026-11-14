@@ -13,7 +13,7 @@ ADMIN_ID = str(os.getenv("ADMIN_TELEGRAM_ID", "")).strip()
 # =============================================================
 PRECIO_DISNEY_USD = 5.0   # Precio en USD de Disney+
 PRECIO_NETFLIX_USD = 4.5  # Precio en USD de Netflix
-TASA_RESPALDO_BS = 65.0   # Tasa de respaldo por si fallan las consultas externas
+TASA_RESPALDO_BS = 1100.0   # Tasa de respaldo por si fallan las consultas externas
 
 PAGO_MOVIL_BANCO = "🏦 Provincial (0108)"
 PAGO_MOVIL_CEDULA = "27538779"
@@ -227,7 +227,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # EDICIÓN MANUAL DE FECHA (CUANDO ESCRIBE LA NUEVA FECHA YYYY-MM-DD)
+    # EDICIÓN MANUAL DE FECHA
     # -------------------------------------------------------------
     if not es_callback and ADMIN_ID and str_chat_id == ADMIN_ID and str_chat_id in admin_editando_cliente and texto:
         modo = admin_editando_cliente[str_chat_id].get("modo")
@@ -236,11 +236,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         if modo == "esperando_nueva_fecha":
             nueva_fecha = texto.strip()
             try:
-                # Validamos formato YYYY-MM-DD
                 datetime.datetime.strptime(nueva_fecha, "%Y-%m-%d")
                 
                 sheet = conectar_sheets()
-                sheet.update_cell(row_idx, 5, nueva_fecha) # Columna Vencimiento es la 5
+                sheet.update_cell(row_idx, 5, nueva_fecha)
                 admin_editando_cliente.pop(str_chat_id)
 
                 enviar_mensaje_callback(
@@ -499,7 +498,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 fila_obj = registros[row_idx_edit - 2] if (row_idx_edit - 2) < len(registros) else {}
                 srv_cli = safe_get(fila_obj, "Servicio", "Disney+")
 
-                # Buscamos cuentas activas disponibles que tengan cupos libres
                 cuentas_disponibles = obtener_cuentas_con_cupo_disponible(srv_cli)
 
                 if not cuentas_disponibles:
@@ -514,7 +512,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 for cta_correo, cta_row_idx in cuentas_disponibles:
                     botones_cuentas.append([{"text": f"📧 {cta_correo}", "callback_data": f"admin_selcta_{row_idx_edit}_{cta_row_idx}"}])
 
-                botones_cuentas.append([{"text": "🔙 Volver", "callback_data": f"admin_editar_fila_{row_idx_edit}"}])
+                botones_cuentas.append([{"text": "🔙 Volver", "callback_data": f"admin_editar_fila_{row_idx_edit}"}]]
 
                 msg_sel = f"🔄 *SELECCIONAR NUEVA CUENTA ({srv_cli})*\n\nSelecciona la cuenta de destino que tiene cupos libres:"
                 if es_callback and editar_mensaje_callback:
@@ -536,12 +534,10 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 spreadsheet = sheet_principal.spreadsheet
                 sheet_cuentas = spreadsheet.worksheet("Cuentas")
 
-                # Obtenemos datos de la cuenta nueva
                 cta_nueva_vals = sheet_cuentas.row_values(row_idx_cta_nueva)
                 correo_nuevo = cta_nueva_vals[1] if len(cta_nueva_vals) > 1 else ""
                 srv_cuenta = cta_nueva_vals[0] if len(cta_nueva_vals) > 0 else "Disney+"
 
-                # Buscamos perfiles libres en esa cuenta nueva
                 perfiles_libres = obtener_perfiles_libres_en_cuenta(sheet_principal, srv_cuenta, correo_nuevo)
 
                 if not perfiles_libres:
@@ -554,9 +550,11 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
                 botones_perfiles = []
                 for p_libre in perfiles_libres:
-                    botones_perfiles.append([{"text": f"📺 {p_libre}", "callback_data": f"admin_aplicarCambio_{row_idx_cli}_{row_idx_cta_nueva}_{p_libre.replace(' ', '')}"}])
+                    # Guardamos el perfil con guion bajo seguro (Ej: Perfil_1) para evitar problemas en el callback_data
+                    p_token = p_libre.replace(" ", "_")
+                    botones_perfiles.append([{"text": f"📺 {p_libre}", "callback_data": f"admin_aplicarCambio_{row_idx_cli}_{row_idx_cta_nueva}_{p_token}"}])
 
-                botones_perfiles.append([{"text": "🔙 Volver", "callback_data": f"admin_cambiar_cuenta_{row_idx_cli}"}])
+                botones_perfiles.append([{"text": "🔙 Volver", "callback_data": f"admin_cambiar_cuenta_{row_idx_cli}"}]]
 
                 msg_p = f"📺 *SELECCIONAR PERFIL LIBRE*\n\nCuenta seleccionada: `{correo_nuevo}`\nSelecciona el perfil disponible que se le asignará:"
                 if es_callback and editar_mensaje_callback:
@@ -573,8 +571,8 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 partes = accion.split("_")
                 row_idx_cli = int(partes[1])
                 row_idx_cta_nueva = int(partes[2])
-                perfil_elegido_raw = partes[3] # Ej: "Perfil3" -> "Perfil 3"
-                perfil_nuevo = perfil_elegido_raw.replace("Perfil", "Perfil ")
+                perfil_token = partes[3] # Ej: "Perfil_1"
+                perfil_nuevo = perfil_token.replace("_", " ") # Lo pasamos a "Perfil 1"
 
                 resultado_migracion = ejecutar_migracion_cliente_cuenta(row_idx_cli, row_idx_cta_nueva, perfil_nuevo)
 
@@ -583,7 +581,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
                 enviar_mensaje_callback(
                     chat_id,
-                    f"✅ *¡MIGRACIÓN COMPLETADA CON ÉXITO!*\n\n{resultado_migracion}",
+                    f"✅ *¡MIGRACIÓN Y CAMBIO APLICADO CON ÉXITO!*\n\n{resultado_migracion}",
                     {"inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]}
                 )
             except Exception as e:
@@ -675,7 +673,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     )
                     teclado_aprobar = {
                         "inline_keyboard": [
-                            [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}_digital"}],
+                            [{"text": "✅ Aprobar y Activar (+30 days)", "callback_data": f"aprobar_{row_idx}_digital"}],
                             [{"text": "❌ Rechazar (Eliminar Fila)", "callback_data": f"rechazar_{row_idx}"}]
                         ]
                     }
@@ -894,7 +892,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     f"🔹 *Suscripción #{idx} ({servicio})*\n"
                     f"• *Correo:* {correo_mostrar}\n"
                     f"• *Perfil:* {pantalla}\n"
-                    f"• *PIN de seguridad:* {pin_mostrar} 🔒\n"
+                    f"• *PIN:* {pin_mostrar} 🔒\n"
                     f"• *Vencimiento:* {vencimiento} {alerta_vencimiento}\n"
                     f"• *Estado:* {estado}"
                 )
@@ -1124,7 +1122,6 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 # FUNCIONES AUXILIARES DE EDICIÓN Y MIGRACIÓN
 # ==========================================
 def obtener_cuentas_con_cupo_disponible(servicio_solicitado):
-    """Devuelve una lista de tuplas (correo, row_index) de cuentas activas con cupo libre."""
     try:
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
@@ -1153,7 +1150,6 @@ def obtener_cuentas_con_cupo_disponible(servicio_solicitado):
 
 
 def obtener_perfiles_libres_en_cuenta(sheet_principal, servicio_solicitado, correo_cuenta):
-    """Devuelve una lista con los nombres de los perfiles disponibles (Ej: ['Perfil 2', 'Perfil 4']) en esa cuenta."""
     try:
         es_netflix = "netflix" in servicio_solicitado.lower()
         limite_max = 5 if es_netflix else 7
@@ -1181,13 +1177,13 @@ def obtener_perfiles_libres_en_cuenta(sheet_principal, servicio_solicitado, corr
 
 
 def ejecutar_migracion_cliente_cuenta(row_idx_cliente, row_idx_cuenta_nueva, nuevo_perfil):
-    """Mueve a un cliente a una nueva cuenta y perfil, liberando su cupo viejo y sumando a la nueva cuenta."""
+    """Mueve al cliente, actualiza perfiles, calcula el PIN correcto y notifica al usuario."""
     try:
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
         sheet_cuentas = spreadsheet.worksheet("Cuentas")
 
-        # 1. Obtenemos datos actuales del cliente en la hoja principal
+        # 1. Obtenemos datos actuales del cliente
         cliente_vals = sheet_principal.row_values(row_idx_cliente)
         correo_viejo = cliente_vals[2] if len(cliente_vals) > 2 else ""
 
@@ -1196,7 +1192,7 @@ def ejecutar_migracion_cliente_cuenta(row_idx_cliente, row_idx_cuenta_nueva, nue
         correo_nuevo = cuenta_nueva_vals[1] if len(cuenta_nueva_vals) > 1 else ""
         srv_cuenta = cuenta_nueva_vals[0] if len(cuenta_nueva_vals) > 0 else "Disney+"
 
-        # 3. Liberamos el cupo en la cuenta vieja (si aplica)
+        # 3. Liberamos el cupo en la cuenta vieja
         if correo_viejo and "pendiente" not in correo_viejo.lower():
             registros_cuentas = sheet_cuentas.get_all_records()
             for idx_c, c_row in enumerate(registros_cuentas, start=2):
@@ -1212,7 +1208,7 @@ def ejecutar_migracion_cliente_cuenta(row_idx_cliente, row_idx_cuenta_nueva, nue
                         sheet_cuentas.update_cell(idx_c, 6, "Activa")
                     break
 
-        # 4. Ocupamos el cupo en la cuenta nueva
+        # 4. Ocupamos el cupo en la cuenta nueva y actualizamos si se llenó
         for idx_c, c_row in enumerate(sheet_cuentas.get_all_records(), start=2):
             c_mail = safe_get(c_row, "Correo (Usuario)", safe_get(c_row, "Correo", ""))
             if c_mail.lower() == correo_nuevo.lower():
@@ -1229,26 +1225,26 @@ def ejecutar_migracion_cliente_cuenta(row_idx_cliente, row_idx_cuenta_nueva, nue
                     sheet_cuentas.update_cell(idx_c, 6, "Llena")
                 break
 
-        # 5. Actualizamos al cliente en la hoja principal (Cuenta y Perfil)
-        sheet_principal.update_cell(row_idx_cliente, 3, correo_nuevo) # Columna Cuenta
-        sheet_principal.update_cell(row_idx_cliente, 4, nuevo_perfil) # Columna Pantalla/Perfil
+        # 5. Actualizamos la celda del cliente en la hoja principal
+        sheet_principal.update_cell(row_idx_cliente, 3, correo_nuevo)
+        sheet_principal.update_cell(row_idx_cliente, 4, nuevo_perfil)
 
+        # 6. Obtenemos el PIN correcto y datos del cliente para la notificación
         pin_nuevo = obtener_pin_asignado_cliente(correo_nuevo, nuevo_perfil)
         nombre_cli = cliente_vals[1] if len(cliente_vals) > 1 else "Cliente"
         tid_cli = cliente_vals[0] if len(cliente_vals) > 0 else ""
 
-        # 6. Notificamos al cliente por Telegram si tiene ID
+        # 7. Enviamos la notificación automática por Telegram al cliente
         if tid_cli:
             try:
                 msg_migracion = (
-                    "🔄 *ACTUALIZACIÓN DE TU CUENTA*\n\n"
-                    f"Tu servicio de *{srv_cli if 'srv_cli' in locals() else 'Streaming'}* ha sido migrado a una nueva cuenta:\n\n"
-                    f"• *Nuevo Correo:* `{correo_nuevo}`\n"
-                    f"• *Nuevo Perfil:* `{nuevo_perfil}`\n"
+                    "🔄 *ACTUALIZACIÓN Y ASIGNACIÓN DE TU CUENTA*\n\n"
+                    f"Tu servicio de *{srv_cuenta}* ha sido actualizado/migrado con éxito:\n\n"
+                    f"• *Correo asignado:* `{correo_nuevo}`\n"
+                    f"• *Perfil:* `{nuevo_perfil}`\n"
                     f"• *PIN de seguridad:* `{pin_nuevo}` 🔒\n\n"
-                    "Puedes ingresar a la plataforma con estos nuevos datos."
+                    "Ya puedes ingresar a la plataforma con estos nuevos datos."
                 )
-                # Usamos una función interna de envío si está disponible
                 token = os.getenv("TELEGRAM_TOKEN", "")
                 if token:
                     requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={
@@ -1259,7 +1255,7 @@ def ejecutar_migracion_cliente_cuenta(row_idx_cliente, row_idx_cuenta_nueva, nue
             except Exception as e:
                 print(f"No se pudo notificar al cliente migrado: {e}")
 
-        return f"• *Cliente:* {nombre_cli}\n• *Nueva Cuenta:* `{correo_nuevo}`\n• *Nuevo Perfil:* `{nuevo_perfil}`\n• *PIN:* `{pin_nuevo}`"
+        return f"• *Cliente:* {nombre_cli}\n• *Nueva Cuenta:* `{correo_nuevo}`\n• *Nuevo Perfil:* `{nuevo_perfil}`\n• *PIN Asignado:* `{pin_nuevo}` 🔒"
     except Exception as e:
         print(f"Error en migración: {e}")
         return f"❌ Error al migrar: {e}"
