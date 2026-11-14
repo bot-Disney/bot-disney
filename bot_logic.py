@@ -23,7 +23,7 @@ control_intentos_otp = {}
 MAX_INTENTOS_RAPIDOS = 2
 COOLDOWN_SEGUNDOS = 180
 
-# Control de usuarios que están esperando enviar captura de pago (Guarda chat_id -> row_idx exacto)
+# Control de usuarios que están esperando enviar captura de pago
 esperando_captura_pago = {}
 
 
@@ -74,7 +74,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma con limpieza automática de filas huérfanas al cancelar."""
+    """Cerebro industrial multi-plataforma con rechazo inteligente y limpieza de registros falsos."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -128,7 +128,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             teclado_admin = {
                 "inline_keyboard": [
                     [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}_digital"}],
-                    [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_pendiente}"}]
+                    [{"text": "❌ Rechazar (Eliminar Fila)", "callback_data": f"rechazar_{row_idx_pendiente}"}]
                 ]
             }
             enviar_foto_callback(int(ADMIN_ID), photo_file_id, caption_admin, teclado_admin)
@@ -253,7 +253,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     teclado_aprobar = {
                         "inline_keyboard": [
                             [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx}_digital"}],
-                            [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx}"}]
+                            [{"text": "❌ Rechazar (Eliminar Fila)", "callback_data": f"rechazar_{row_idx}"}]
                         ]
                     }
                     enviar_mensaje_callback(chat_id, txt, teclado_aprobar)
@@ -361,10 +361,36 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
     elif accion.startswith("rechazar_"):
         if ADMIN_ID and str_chat_id == ADMIN_ID:
-            row_idx = int(accion.split("_")[1])
-            if message_id:
-                quitar_botones_telegram(chat_id, message_id)
-            enviar_mensaje_callback(chat_id, f"❌ Pago de la fila {row_idx} marcado como rechazado/revisar.", get_back_keyboard())
+            try:
+                row_idx = int(accion.split("_")[1])
+                
+                # Leemos datos de la fila antes de borrarla para notificar al cliente y liberar stock
+                sheet_principal = conectar_sheets()
+                registros = sheet_principal.get_all_records()
+                fila_obj = registros[row_idx - 2] if (row_idx - 2) < len(registros) else {}
+                tid_cliente = safe_get(fila_obj, "Telegram_ID", "")
+                srv_rechazado = safe_get(fila_obj, "Servicio", "Streaming")
+
+                # Ejecutamos la misma función de limpieza para borrar la fila y liberar el cupo en Cuentas
+                limpiar_fila_cancelada(row_idx)
+
+                if message_id:
+                    quitar_botones_telegram(chat_id, message_id)
+
+                enviar_mensaje_callback(chat_id, f"❌ Pago de la fila {row_idx} rechazado. Fila eliminada y cupo liberado con éxito.", get_back_keyboard())
+
+                if tid_cliente:
+                    try:
+                        msg_rechazo = (
+                            "⚠️ *COMPROBANTE RECHAZADO*\n\n"
+                            f"Tu comprobante de pago para *{srv_rechazado}* no pudo ser verificado (puede ser ilegible, incorrecto o duplicado).\n\n"
+                            "Por favor, verifica los datos e intenta realizar la compra o reporte nuevamente desde el menú."
+                        )
+                        enviar_mensaje_callback(int(tid_cliente), msg_rechazo, get_main_menu_keyboard())
+                    except Exception:
+                        pass
+            except Exception as e:
+                enviar_mensaje_callback(chat_id, f"❌ Error al rechazar: {e}", get_back_keyboard())
         return
 
     # -------------------------------------------------------------
@@ -579,7 +605,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
 
 
 def limpiar_fila_cancelada(row_idx):
-    """Borra la fila huérfana si el usuario canceló el pago y libera el cupo en la cuenta maestra."""
+    """Borra la fila si el usuario canceló o el administrador rechazó el pago, liberando el cupo en la cuenta maestra."""
     try:
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
@@ -594,8 +620,8 @@ def limpiar_fila_cancelada(row_idx):
 
         estado_actual = safe_get({"Estado": fila_datos[5] if len(fila_datos) > 5 else ""}, "Estado", "").lower()
         
-        # Solo limpiamos si todavía estaba pendiente de pago (nunca se aprobó)
-        if "pendiente" in estado_actual:
+        # Limpiamos si estaba pendiente de pago o marcado como pendiente
+        if "pendiente" in estado_actual or estado_actual == "":
             correo_a_liberar = safe_get({"Cuenta": fila_datos[2]}, "Cuenta", "")
             
             if correo_a_liberar and "pendiente de stock" not in correo_a_liberar.lower():
@@ -613,12 +639,12 @@ def limpiar_fila_cancelada(row_idx):
                                 sheet_cuentas.update_cell(idx_c, 6, "Activa")
                             break
                 except Exception as e:
-                    print(f"Aviso al liberar stock en cancelación: {e}")
+                    print(f"Aviso al liberar stock en cancelación/rechazo: {e}")
 
             sheet_principal.delete_rows(row_idx)
-            print(f"Fila huérfana {row_idx} eliminada por cancelación del usuario.")
+            print(f"Fila {row_idx} eliminada por cancelación o rechazo.")
     except Exception as e:
-        print(f"Error limpiando fila cancelada: {e}")
+        print(f"Error limpiando fila: {e}")
 
 
 def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_target, detalle_operacion, enviar_cb, editar_cb=None, message_id=None, es_cb=False):
@@ -666,7 +692,7 @@ def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_targ
             teclado_admin = {
                 "inline_keyboard": [
                     [{"text": "✅ Aprobar Efectivo (+30 días)", "callback_data": f"aprobar_{row_idx_target}_efectivo"}],
-                    [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_target}"}]
+                    [{"text": "❌ Rechazar (Eliminar Fila)", "callback_data": f"rechazar_{row_idx_target}"}]
                 ]
             }
             enviar_cb(int(ADMIN_ID), texto_admin, teclado_admin)
@@ -822,10 +848,10 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
         teclado_admin = {
             "inline_keyboard": [
                 [{"text": "✅ Aprobar y Activar (+30 días)", "callback_data": f"aprobar_{row_idx_pendiente}_digital"}],
-                [{"text": "❌ Rechazar", "callback_data": f"rechazar_{row_idx_pendiente}"}]
+                [{"text": "❌ Rechazar (Eliminar Fila)", "callback_data": f"rechazar_{row_idx_pendiente}"}]
             ]
         }
-        enviar_cb(int(ADMIN_ID), texto_admin, teclado_admin)
+        enviar_foto_callback(int(ADMIN_ID), texto_admin, teclado_admin)
 
     enviar_cb(chat_id, "✅ Reporte enviado con éxito al administrador. En breve verificaremos tu referencia.", get_main_menu_keyboard())
 
