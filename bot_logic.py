@@ -25,7 +25,7 @@ COOLDOWN_SEGUNDOS = 180
 
 # Control de estados temporales de los usuarios
 esperando_captura_pago = {}
-esperando_nuevo_nombre_perfil = {}  # Guarda chat_id -> row_idx cuando el usuario va a renombrar su perfil
+esperando_nuevo_nombre_perfil = {}
 
 
 def safe_get(row_dict, key, default=""):
@@ -75,7 +75,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial con diseño visual limpio y compacto."""
+    """Cerebro industrial con gestión de expulsión de usuarios desde el panel de administrador."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -136,7 +136,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # CANCELAR Y VOLVER AL MENÚ (LIMPIEZA DE FILAS HUÉRFANAS)
+    # CANCELAR Y VOLVER AL MENÚ
     # -------------------------------------------------------------
     if accion == "menu_principal" or accion == "/start" or accion == "/menu":
         if str_chat_id in esperando_captura_pago:
@@ -210,7 +210,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # COMANDO SECRETO / TEXTO: PAGO EN EFECTIVO
+    # PAGO EN EFECTIVO
     # -------------------------------------------------------------
     if accion == "efectivo" or accion == "/efectivo":
         if str_chat_id in esperando_captura_pago:
@@ -259,7 +259,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         return
 
     # -------------------------------------------------------------
-    # PANEL DE ADMINISTRADOR Y GESTIÓN DE VENCIDOS
+    # PANEL DE ADMINISTRADOR Y GESTIÓN DE USUARIOS / VENCIDOS
     # -------------------------------------------------------------
     if accion == "/admin" or accion == "admin_volver":
         if str_chat_id in esperando_captura_pago:
@@ -271,8 +271,9 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
             teclado = {
                 "inline_keyboard": [
                     [{"text": "📋 Ver Pagos Pendientes", "callback_data": "admin_ver_pendientes"}],
+                    [{"text": "👥 Gestionar / Expulsar Clientes Activos", "callback_data": "admin_ver_activos"}],
                     [{"text": "🗑️ Gestionar / Eliminar Vencidos", "callback_data": "admin_ver_vencidos"}],
-                    [{"text": "📦 Asignar Stock Pendiente (Lista de Espera)", "callback_data": "admin_asignar_stock"}],
+                    [{"text": "📦 Asignar Stock Pendiente", "callback_data": "admin_asignar_stock"}],
                     [{"text": "🔙 Volver al Menú", "callback_data": "menu_principal"}]
                 ]
             }
@@ -296,7 +297,9 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         if ADMIN_ID and str_chat_id == ADMIN_ID:
             pendientes = obtener_clientes_pendientes()
             if not pendientes:
-                enviar_mensaje_callback(chat_id, "✅ No hay pagos pendientes en este momento.", get_back_keyboard())
+                enviar_mensaje_callback(chat_id, "✅ No hay pagos pendientes en este momento.", {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
             else:
                 for idx, row_idx, p in pendientes:
                     srv_p = safe_get(p, "Servicio", "Disney+")
@@ -315,6 +318,76 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                         ]
                     }
                     enviar_mensaje_callback(chat_id, txt, teclado_aprobar)
+        return
+
+    elif accion == "admin_ver_activos":
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            activos = obtener_clientes_activos_general()
+            if not activos:
+                enviar_mensaje_callback(chat_id, "ℹ️ No hay clientes activos registrados en este momento.", {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
+            else:
+                for idx, row_idx, act in activos:
+                    srv_a = safe_get(act, "Servicio", "Disney+")
+                    pnt_a = safe_get(act, "Pantalla", "Perfil 1")
+                    cta_a = safe_get(act, "Cuenta", "Cuenta")
+                    nom_a = safe_get(act, "Nombre", "Cliente")
+                    tid_a = safe_get(act, "Telegram_ID", "")
+                    fec_a = safe_get(act, "Vencimiento", "N/A")
+                    txt = (
+                        f"🟢 *Cliente Activo #{idx}* (Fila {row_idx})\n"
+                        f"• *Cliente:* {nom_a}\n"
+                        f"• *Telegram ID:* `{tid_a}`\n"
+                        f"• *Servicio:* {srv_a} ({pnt_a})\n"
+                        f"• *Correo:* `{cta_a}`\n"
+                        f"• *Vence el:* `{fec_a}`"
+                    )
+                    teclado_expulsar = {
+                        "inline_keyboard": [
+                            [{"text": "🚨 Expulsar y Liberar Cupo", "callback_data": f"admin_expulsar_{row_idx}"}],
+                            [{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]
+                        ]
+                    }
+                    enviar_mensaje_callback(chat_id, txt, teclado_expulsar)
+        return
+
+    elif accion.startswith("admin_expulsar_"):
+        if ADMIN_ID and str_chat_id == ADMIN_ID:
+            try:
+                row_idx_expulsar = int(accion.split("_")[-1])
+                
+                # Leemos datos antes de borrar para notificar al usuario
+                sheet_principal = conectar_sheets()
+                registros = sheet_principal.get_all_records()
+                fila_obj = registros[row_idx_expulsar - 2] if (row_idx_expulsar - 2) < len(registros) else {}
+                tid_cliente = safe_get(fila_obj, "Telegram_ID", "")
+                srv_exp = safe_get(fila_obj, "Servicio", "Streaming")
+                pnt_exp = safe_get(fila_obj, "Pantalla", "Perfil")
+
+                # Liberamos y eliminamos fila usando la función maestra
+                resultado_expulsion = liberar_y_eliminar_fila_suscripcion(row_idx_expulsar)
+                
+                if message_id:
+                    quitar_botones_telegram(chat_id, message_id)
+
+                enviar_mensaje_callback(chat_id, f"🚨 {resultado_expulsion}", {
+                    "inline_keyboard": [[{"text": "🔙 Volver al Panel Admin", "callback_data": "admin_volver"}]]
+                })
+
+                # Notificamos al usuario expulsado
+                if tid_cliente:
+                    try:
+                        msg_usuario = (
+                            "⚠️ *AVISO DE SUSPENSIÓN*\n\n"
+                            f"Tu suscripción a *{srv_exp}* ({pnt_exp}) ha sido finalizada por el administrador.\n"
+                            "Si consideras que se trata de un error, comunícate con soporte."
+                        )
+                        enviar_mensaje_callback(int(tid_cliente), msg_usuario, get_main_menu_keyboard())
+                    except Exception:
+                        pass
+            except Exception as e:
+                enviar_mensaje_callback(chat_id, f"❌ Error al expulsar el usuario: {e}", get_back_keyboard())
         return
 
     elif accion == "admin_ver_vencidos":
@@ -507,7 +580,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
         ]
 
         if not suscripciones_activas:
-            enviar_mensaje_callback(chat_id, "⚠️ No tienes pantallas activas disponibles para renombrar.", get_back_keyboard())
+            enviar_mensaje_callback(chat_id, f"⚠️ No tienes pantallas activas disponibles para renombrar.", get_back_keyboard())
             return
 
         botones_selector = []
@@ -546,7 +619,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                 enviar_mensaje_callback(chat_id, mensaje_peticion, teclado_canc)
         except Exception as e:
             print(f"Error iniciando renombrado: {e}")
-            enviar_mensaje_callback(chat_id, "⚠️ Ocurrió un error. Intenta de nuevo.", get_back_keyboard())
+            enviar_mensaje_callback(chat_id, f"⚠️ Ocurrió un error. Intenta de nuevo.", get_back_keyboard())
         return
 
     elif accion == "obtener_codigo" or "codigo" in accion:
@@ -923,7 +996,7 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
     if es_cb and editar_cb:
         editar_cb(chat_id, message_id, mensaje, teclado)
     else:
-        enviar_cb(chat_id, mensaje, teclado)
+        enviar_cb(msg_espera)
 
 
 def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat_id, row_idx_pendiente, enviar_foto_callback):
@@ -955,7 +1028,7 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
                 [{"text": "❌ Rechazar (Eliminar Fila)", "callback_data": f"rechazar_{row_idx_pendiente}"}]
             ]
         }
-        enviar_foto_callback(int(ADMIN_ID), photo_file_id, caption_admin, teclado_admin)
+        enviar_foto_callback(int(ADMIN_ID), texto_admin, teclado_admin)
 
     enviar_cb(chat_id, "✅ Reporte enviado con éxito al administrador. En breve verificaremos tu referencia.", get_main_menu_keyboard())
 
@@ -1202,6 +1275,23 @@ def obtener_clientes_pendientes():
         return []
 
 
+def obtener_clientes_activos_general():
+    """Busca en la hoja principal todos los clientes que están con estado Activo para poder gestionarlos o expulsarlos."""
+    try:
+        sheet = conectar_sheets()
+        registros = sheet.get_all_records()
+        activos = []
+        for idx, row in enumerate(registros, start=2):
+            estado = safe_get(row, "Estado", "").lower()
+            cuenta = safe_get(row, "Cuenta", "")
+            if estado == "activo" and cuenta and cuenta.lower() not in ("por asignar", "pendiente de stock"):
+                activos.append((len(activos)+1, idx, row))
+        return activos
+    except Exception as e:
+        print(f"Error obteniendo clientes activos: {e}")
+        return []
+
+
 def obtener_suscripciones_vencidas():
     try:
         sheet = conectar_sheets()
@@ -1230,6 +1320,7 @@ def obtener_suscripciones_vencidas():
 
 
 def liberar_y_eliminar_fila_suscripcion(row_idx):
+    """Elimina la fila del cliente, resta -1 en la hoja Cuentas y cambia el estado a Activa si estaba Llena."""
     try:
         sheet_principal = conectar_sheets()
         spreadsheet = sheet_principal.spreadsheet
@@ -1396,8 +1487,6 @@ def get_main_menu_keyboard():
 
 def get_datos_keyboard(mostrar_renovar=False, suscripciones=None):
     botones = []
-    
-    # Un solo botón compacto para cambiar nombres si tiene suscripciones activas
     if suscripciones:
         tiene_activas = any(safe_get(s, "Estado", "").lower() == "activo" and "pendiente" not in safe_get(s, "Cuenta", "").lower() for s in suscripciones)
         if tiene_activas:
