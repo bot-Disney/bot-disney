@@ -74,7 +74,7 @@ def obtener_tasa_usdt_hoy():
 
 
 def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callback, editar_mensaje_callback=None, message_id=None, es_callback=False, callback_data=None, photo_file_id=None, enviar_foto_callback=None):
-    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas, perfiles sucesivos, stock y lista de espera."""
+    """Cerebro industrial multi-plataforma (Disney+ y Netflix) con soporte para múltiples pantallas, perfiles sucesivos por límite, stock y lista de espera."""
     
     str_chat_id = str(chat_id).strip()
     accion = callback_data if es_callback else texto.lower().strip()
@@ -347,7 +347,7 @@ def procesar_mensaje_bot(chat_id, texto, nombre, username, enviar_mensaje_callba
                     tiene_por_renovar = True
 
                 bloques.append(
-                    f"🔹 *Suscripción #{idx} ({servicio} - {pantalla})*\n"
+                    f"🔹 *Suscripción #{idx} ({servicio})*\n"
                     f"• *Correo:* {correo_mostrar}\n"
                     f"• *Perfil Asignado:* {pantalla}\n"
                     f"• *Vencimiento:* {vencimiento} {alerta_vencimiento}\n"
@@ -558,7 +558,6 @@ def notificar_pago_efectivo(chat_id, str_chat_id, nombre, username, row_idx_targ
 
 
 def iniciar_proceso_pago(chat_id, str_chat_id, nombre, username, servicio_clave, tipo_operacion, row_idx_target, message_id, enviar_cb, editar_cb, es_cb):
-    # Asociamos este chat exactamente a esta fila específica para que no se crucen las compras múltiples
     esperando_captura_pago[str_chat_id] = row_idx_target
     
     es_netflix = (servicio_clave == "netflix")
@@ -670,7 +669,7 @@ def ejecutar_busqueda_otp(chat_id, str_chat_id, servicio, message_id, enviar_cb,
     if codigo:
         mensaje = f"🔑 *Tu código de acceso de {nombre_plataforma} es:*\n\n`{codigo}`\n\n_(Cópialo e ingrésalo en tu pantalla)_"
     else:
-        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado in tu TV hace unos segundos e intenta de nuevo."
+        mensaje = f"⚠️ No se encontraron códigos recientes de *{nombre_plataforma}*. Asegúrate de haberlo solicitado en tu TV hace unos segundos e intenta de nuevo."
 
     teclado = get_back_keyboard()
     if es_cb and editar_cb:
@@ -716,21 +715,37 @@ def procesar_texto_reporte(chat_id, texto, nombre, username, enviar_cb, str_chat
 # ==========================================
 # FUNCIONES AUXILIARES DE GOOGLE SHEETS
 # ==========================================
-def obtener_siguiente_perfil_sucesivo(sheet, servicio="Disney"):
+def obtener_siguiente_perfil_sucesivo(sheet, servicio_solicitado, correo_asignado):
+    """Calcula el perfil sucesivo respetando el límite máximo (Netflix: 5, Disney+: 7) por cada cuenta específica."""
     try:
+        es_netflix = "netflix" in servicio_solicitado.lower()
+        limite_maximo = 5 if es_netflix else 7
+
         registros = sheet.get_all_records()
-        count = 0
+        perfiles_en_esta_cuenta = 0
+
         for r in registros:
-            srv = safe_get(r, "Servicio", "")
-            if servicio.lower() in srv.lower():
-                count += 1
-        return f"Perfil {count + 1}"
-    except Exception:
+            srv = safe_get(r, "Servicio", "").lower()
+            cta = safe_get(r, "Cuenta", "").lower()
+            
+            # Si coincide tanto el servicio como el correo exacto de la cuenta asignada
+            if servicio_solicitado.lower() in srv and cta == correo_asignado.lower():
+                perfiles_en_esta_cuenta += 1
+
+        # El siguiente perfil será la cantidad actual + 1 (ej: si van 3, toca el Perfil 4)
+        siguiente_numero = perfiles_en_esta_cuenta + 1
+        
+        if siguiente_numero > limite_maximo:
+            return "Perfil 1"  # Si ya superó el límite, arranca en Perfil 1 para la nueva cuenta
+            
+        return f"Perfil {siguiente_numero}"
+    except Exception as e:
+        print(f"Error calculando perfil sucesivo: {e}")
         return "Perfil 1"
 
 
 def asignar_correo_desde_stock(sheet_principal, servicio_solicitado, chat_id="", nombre_cliente="", enviar_mensaje_callback=None):
-    """Busca en 'Cuentas' un correo disponible, suma +1, marca Llena al tope y envía alertas al Admin."""
+    """Busca en 'Cuentas' un correo disponible que no haya superado su capacidad y actualiza su stock."""
     try:
         spreadsheet = sheet_principal.spreadsheet
         try:
@@ -746,10 +761,12 @@ def asignar_correo_desde_stock(sheet_principal, servicio_solicitado, chat_id="",
             
             if servicio_solicitado.lower() in srv_cuenta and estado_cuenta == "activa":
                 try:
-                    capacidad = int(safe_get(cuenta_row, "Capacidad Total", "5"))
+                    # Límite por defecto según plataforma si no está especificado en la hoja
+                    limite_defecto = 5 if "netflix" in servicio_solicitado.lower() else 7
+                    capacidad = int(safe_get(cuenta_row, "Capacidad Total", str(limite_defecto)))
                     ocupados = int(safe_get(cuenta_row, "Perfiles Ocupados", "0"))
                 except ValueError:
-                    capacidad = 5
+                    capacidad = 5 if "netflix" in servicio_solicitado.lower() else 7
                     ocupados = 0
 
                 if ocupados < capacidad:
@@ -827,10 +844,11 @@ def procesar_asignacion_stock_masivo(enviar_msg_cb):
                     
                     if servicio_cli.lower() in srv_cuenta and estado_cuenta == "activa":
                         try:
-                            capacidad = int(safe_get(cuenta_row, "Capacidad Total", "5"))
+                            limite_defecto = 5 if "netflix" in servicio_cli.lower() else 7
+                            capacidad = int(safe_get(cuenta_row, "Capacidad Total", str(limite_defecto)))
                             ocupados = int(safe_get(cuenta_row, "Perfiles Ocupados", "0"))
                         except ValueError:
-                            capacidad = 5
+                            capacidad = 5 if "netflix" in servicio_cli.lower() else 7
                             ocupados = 0
 
                         if ocupados < capacidad:
@@ -839,7 +857,11 @@ def procesar_asignacion_stock_masivo(enviar_msg_cb):
                             break
                 
                 if cuenta_encontrada and idx_cuenta_encontrada:
+                    # Recalculamos el perfil correcto respetando el límite para esta cuenta específica
+                    perfil_correcto = obtener_siguiente_perfil_sucesivo(sheet_principal, servicio_cli, cuenta_encontrada)
+                    
                     sheet_principal.update_cell(idx_cli, 3, cuenta_encontrada)
+                    sheet_principal.update_cell(idx_cli, 4, perfil_correcto)
                     
                     fila_c_actual = sheet_cuentas.row_values(idx_cuenta_encontrada)
                     try:
@@ -850,7 +872,8 @@ def procesar_asignacion_stock_masivo(enviar_msg_cb):
                     nuevos_ocupados = ocupados_actuales + 1
                     sheet_cuentas.update_cell(idx_cuenta_encontrada, 5, nuevos_ocupados)
                     
-                    capacidad_total = int(fila_c_actual[3]) if len(fila_c_actual) > 3 and fila_c_actual[3].isdigit() else 5
+                    limite_defecto = 5 if "netflix" in servicio_cli.lower() else 7
+                    capacidad_total = int(fila_c_actual[3]) if len(fila_c_actual) > 3 and fila_c_actual[3].isdigit() else limite_defecto
                     if nuevos_ocupados >= capacidad_total:
                         sheet_cuentas.update_cell(idx_cuenta_encontrada, 6, "Llena")
 
@@ -860,7 +883,8 @@ def procesar_asignacion_stock_masivo(enviar_msg_cb):
                             mensaje_notif = (
                                 f"🎉 *¡EXCELENTE NOTICIA, {primer_nombre}!*\n\n"
                                 f"Tu cuenta de *{servicio_cli}* ya ha sido asignada y se encuentra 100% **Activa**.\n\n"
-                                f"• *Correo asignado:* `{cuenta_encontrada}`\n\n"
+                                f"• *Correo asignado:* `{cuenta_encontrada}`\n"
+                                f"• *Perfil:* `{perfil_correcto}`\n\n"
                                 "Puedes ingresar al bot y presionar **📲 Ver mis datos / pantallas** para consultar los detalles completos de tu acceso."
                             )
                             enviar_msg_cb(int(tid_cliente), mensaje_notif, get_main_menu_keyboard())
@@ -901,9 +925,12 @@ def crear_nueva_fila_pendiente(str_chat_id, nombre, username="", servicio="Disne
     try:
         sheet = conectar_sheets()
         nombre_completo = f"{nombre} (@{username})" if username else nombre
-        perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio)
         
+        # 1. Primero obtenemos el correo desde el stock disponible
         correo_asignado = asignar_correo_desde_stock(sheet, servicio, str_chat_id, nombre_completo, enviar_mensaje_cb)
+        
+        # 2. Luego calculamos el perfil sucesivo basándonos estrictamente en los cupos de ese correo
+        perfil_asignado = obtener_siguiente_perfil_sucesivo(sheet, servicio, correo_asignado)
         
         sheet.append_row([str(str_chat_id), nombre_completo, correo_asignado, perfil_asignado, "", "Pendiente Pago", servicio])
         return len(sheet.get_all_records()) + 1
